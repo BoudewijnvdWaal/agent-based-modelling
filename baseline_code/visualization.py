@@ -9,6 +9,7 @@ import pygame as pg
 from math import *
 import os
 import ctypes
+import platform
 import time as timer
 
 #%% Initialize values
@@ -87,9 +88,12 @@ def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
     map_properties = dict()  # create dict to return all properties
     map_get_range(nodes_dict, map_properties)  # get info about the screen range properties
 
-    ctypes.windll.user32.SetProcessDPIAware()  # line of code required to get correct resolution of screen
-    true_res = (ctypes.windll.user32.GetSystemMetrics(0),
-                ctypes.windll.user32.GetSystemMetrics(1))  # line of code required to get correct resolution of screen
+    # Determine screen resolution. On Windows we can query user32; on macOS/Linux fall back to a fixed HD size.
+    if platform.system() == "Windows":
+        ctypes.windll.user32.SetProcessDPIAware()
+        true_res = (ctypes.windll.user32.GetSystemMetrics(0), ctypes.windll.user32.GetSystemMetrics(1))
+    else:
+        true_res = (1920, 1080)
     reso_ratio = map_properties['x_range'] / float(map_properties['y_range'])
 
     x_pixels = int(screen_percentage * min(true_res[0], true_res[1] * reso_ratio))  # calculate limiting axis: horizontal vs vertical
@@ -104,7 +108,8 @@ def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
     scr = pg.display.set_mode(outer_reso)
     scrrect = scr.get_rect()  # get rectangular area of the surface
     scr.fill(white)  # set background color
-    plane_pic = pg.image.load(os.getcwd() + "\\blue-plane-hi.bmp")  # get the aircraft image
+    plane_pic_path = os.path.join(os.getcwd(), "blue-plane-hi.bmp")
+    plane_pic = pg.image.load(plane_pic_path)  # get the aircraft image
     plane_pic.set_colorkey(pg.Color(255, 255, 255))  # remove white background to make transparent
 
     for i in range(0, 360):  # transform aircraft image in every possible direction
