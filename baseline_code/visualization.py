@@ -20,6 +20,7 @@ disp_radar_aircraft = False  # display which other aircraft an aircaft sees
 disp_time = True  # display current time
 disp_waypoint = True  # display dot of the waypoint
 disp_vehicles = True
+disp_runways = False  # draw the stylized green runway blocks
 
 #Lines below are used in visualization, dont change them (line 26-46)
 piclist = []  # list to store all pics
@@ -108,12 +109,14 @@ def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
     scr = pg.display.set_mode(outer_reso)
     scrrect = scr.get_rect()  # get rectangular area of the surface
     scr.fill(white)  # set background color
-    plane_pic_path = os.path.join(os.getcwd(), "blue-plane-hi.bmp")
-    plane_pic = pg.image.load(plane_pic_path)  # get the aircraft image
-    plane_pic.set_colorkey(pg.Color(255, 255, 255))  # remove white background to make transparent
+    plane_pic_path = os.path.join(os.getcwd(), "Red_Car.png")
+    plane_pic = pg.image.load(plane_pic_path).convert_alpha()  # car sprite with transparency
+    # Scale sprite to a consistent width (~32 px) to match the old plane icon size
+    target_w = 32
+    scale_factor = target_w / plane_pic.get_width()
 
-    for i in range(0, 360):  # transform aircraft image in every possible direction
-        piclist.append(pg.transform.rotozoom(plane_pic, i, (1. / 14.)))  # 1/14 is used for scaling the aircraft image
+    for i in range(0, 360):  # transform vehicle image in every possible direction
+        piclist.append(pg.transform.rotozoom(plane_pic, i, scale_factor))
         rectlist.append(piclist[i].get_rect())  # get rectangular surface of the pic
 
     map_properties['outer_reso'] = outer_reso  # store created information (resolution)
@@ -213,16 +216,25 @@ def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_r
         else:
             pass
 
-    #Print runways on map   
-    runway_a = [(3, 2.5), (3, 6.5)]
-    runway_d = [(1, 3.5), (1, 7.5)]
-    plot_line(scr, darkgreen, reso, 5, runway_a[0], runway_a[1], min_x, max_y, x_range, y_range, scr_x_shift, scr_y_shift)
-    plot_line(scr, darkgreen, reso, 5, runway_d[0], runway_d[1], min_x, max_y, x_range, y_range, scr_x_shift, scr_y_shift)
+    #Print runways on map (optional)
+    if disp_runways:
+        runway_a = [(3, 2.5), (3, 6.5)]
+        runway_d = [(1, 3.5), (1, 7.5)]
+        plot_line(scr, darkgreen, reso, 5, runway_a[0], runway_a[1], min_x, max_y, x_range, y_range, scr_x_shift, scr_y_shift)
+        plot_line(scr, darkgreen, reso, 5, runway_d[0], runway_d[1], min_x, max_y, x_range, y_range, scr_x_shift, scr_y_shift)
     
     #Print waypoints and ids on map
     for node in nodes_dict:
         wp_coordinate = [nodes_dict[node]['x_pos'], nodes_dict[node]['y_pos']]
-        color = blue
+        ntype = nodes_dict[node].get('type', '').lower()
+        if ntype == 'gate':
+            color = red
+        elif ntype == 'charging':
+            color = green
+        elif ntype == 'cargo':
+            color = pink
+        else:
+            color = blue  # intersections and any other default
         plot_circle(scr, color, reso, 4, wp_coordinate, min_x, max_y, x_range, y_range)
         thisString = str(nodes_dict[node]['id'])  # create string with node ID
         plot_text(scr, thisString, black, 14, reso, wp_coordinate[0], wp_coordinate[1], min_x, max_y, x_range,

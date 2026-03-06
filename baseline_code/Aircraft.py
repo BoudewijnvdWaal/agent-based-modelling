@@ -82,23 +82,37 @@ class Aircraft(object):
         #Update position with rounded values
         x = xy_to[0]-xy_from[0]
         y = xy_to[1]-xy_from[1]
-        x_normalized = x / math.sqrt(x**2+y**2)
-        y_normalized = y / math.sqrt(x**2+y**2)
-        posx = round(self.position[0] + x_normalized * distance_to_move ,2) #round to prevent errors
-        posy = round(self.position[1] + y_normalized * distance_to_move ,2) #round to prevent errors
+        edge_len = math.sqrt(x**2+y**2)
+        # clamp to avoid overshooting the target node
+        step_len = min(distance_to_move, edge_len)
+        if edge_len == 0:
+            x_normalized = 0
+            y_normalized = 0
+        else:
+            x_normalized = x / edge_len
+            y_normalized = y / edge_len
+        posx = round(self.position[0] + x_normalized * step_len ,2) #round to prevent errors
+        posy = round(self.position[1] + y_normalized * step_len ,2) #round to prevent errors
         self.position = (posx, posy)  
         self.get_heading(xy_from, xy_to)	
 
-        #Check if goal is reached or if to_node is reached
-        if self.position == xy_to and self.path_to_goal[0][1] == t+dt: #If with this move its current to node is reached
-            if self.position == self.nodes_dict[self.goal]["xy_pos"]: #if the final goal is reached
-                self.status = "arrived"
+        #Check if goal is reached or if to_node is reached (ignore planner timestamps, use geometry)
+        remaining_dist = math.dist(self.position, xy_to)
+        if remaining_dist <= 1e-3 or self.position == xy_to:
+            # snap to the waypoint to avoid drift
+            self.position = xy_to
 
-            else:  #current to_node is reached, update the remaining path
-                remaining_path = self.path_to_goal
-                self.path_to_goal = remaining_path[1:]
-                
-                new_from_id = self.from_to[1] #new from node
+            # final destination reached
+            if self.position == self.nodes_dict[self.goal]["xy_pos"]:
+                self.status = "arrived"
+                return
+
+            # advance to next leg in the planned path
+            if len(self.path_to_goal) > 1:
+                # drop the reached waypoint
+                self.path_to_goal = self.path_to_goal[1:]
+
+                new_from_id = self.from_to[1] #new from node (current waypoint)
                 new_next_id = self.path_to_goal[0][0] #new to node
 
                 if new_from_id != self.from_to[0]:

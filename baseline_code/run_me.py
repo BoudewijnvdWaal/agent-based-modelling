@@ -17,8 +17,8 @@ from cbs import run_CBS
 
 #%% SET SIMULATION PARAMETERS
 #Input file names (used in import_layout) -> Do not change those unless you want to specify a new layout.
-nodes_file = "nodes.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
-edges_file = "edges.xlsx" #xlsx file with for each edge: from  (node), to (node), length
+nodes_file = "nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
+edges_file = "edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
 
 #Parameters that can be changed:
 simulation_time = 20
@@ -42,8 +42,8 @@ def import_layout(nodes_file, edges_file):
         - start_and_goal_locations = dictionary with node ids for arrival runways, departure runways and gates 
     """
     gates_xy = []   #lst with (x,y) positions of gates
-    rwy_dep_xy = [] #lst with (x,y) positions of entry points of departure runways
-    rwy_arr_xy = [] #lst with (x,y) positions of exit points of arrival runways
+    cargoep_xy = [] #lst with (x,y) positions of entry points of departure runways
+    chargingrr_xy = [] #lst with (x,y) positions of exit points of arrival runways
     
     df_nodes = pd.read_excel(os.getcwd() + "/" + nodes_file)
     df_edges = pd.read_excel(os.getcwd() + "/" + edges_file)
@@ -62,17 +62,17 @@ def import_layout(nodes_file, edges_file):
         nodes_dict[node_id] = node_properties
         
         #Add node type
-        if row["type"] == "rwy_d":
-            rwy_dep_xy.append((row["x_pos"],row["y_pos"]))
-        elif row["type"] == "rwy_a":
-            rwy_arr_xy.append((row["x_pos"],row["y_pos"]))
+        if row["type"] == "cargo":
+            cargoep_xy.append((row["x_pos"],row["y_pos"]))
+        elif row["type"] == "charging":
+            chargingrr_xy.append((row["x_pos"],row["y_pos"]))
         elif row["type"] == "gate":
             gates_xy.append((row["x_pos"],row["y_pos"]))
 
     #Specify node ids of gates, departure runways and arrival runways in a dict
     start_and_goal_locations = {"gates": gates_xy, 
-                                "dep_rwy": rwy_dep_xy,
-                                "arr_rwy": rwy_arr_xy}
+                                "dep_rwy": cargoep_xy,
+                                "arr_rwy": chargingrr_xy}
     
     #Create edges_dict from df_edges
     edges_dict = {}
@@ -180,11 +180,16 @@ while running:
         timer.sleep(visualization_speed) 
       
     #Spawn aircraft for this timestep (use for example a random process)
+    #Aircraft(flight_id, a_d, start_node, goal_node, nodes_dict)
     if t == 1:    
-        ac = Aircraft(1, 'A', 37,36,t, nodes_dict) #As an example we will create one aicraft arriving at node 37 with the goal of reaching node 36
-        ac1 = Aircraft(2, 'D', 36,37,t, nodes_dict)#As an example we will create one aicraft arriving at node 36 with the goal of reaching node 37
+        ac = Aircraft(1, 'A', 1, 9,t, nodes_dict) #As an example we will create one aicraft arriving at node 37 with the goal of reaching node 36
+        ac1 = Aircraft(2, 'D', 11, 3,t, nodes_dict)#As an example we will create one aicraft arriving at node 36 with the goal of reaching node 37
         aircraft_lst.append(ac)
         aircraft_lst.append(ac1)
+
+    if t == 3:
+        ac3 = Aircraft(3, 'A', 4, 8, t, nodes_dict)
+        aircraft_lst.append(ac3)
         
     #Do planning 
     if planner == "Independent":     
