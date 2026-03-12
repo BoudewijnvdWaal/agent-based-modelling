@@ -10,7 +10,7 @@ class Fleet_manager:
         """
         Update the binary occupancy map.
         gate_planes: list of dicts with key 'node_id' for parked planes.
-        aircraft_lst: optional list of Aircraft instances; gates where a/c have status 'arrived' are marked occupied too.
+        aircraft_lst: optional list of GSE instances; gates where a/c have status 'arrived' are marked occupied too.
         t: optional current simulation time (for logging)
         """
         prev_status = self.gate_status

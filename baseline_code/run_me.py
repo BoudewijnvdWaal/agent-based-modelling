@@ -10,7 +10,7 @@ import time as timer
 import pygame as pg
 from single_agent_planner import calc_heuristics
 from visualization import map_initialization, map_running
-from GSE import Aircraft
+from GSE import GSE
 from Fleet_manager import Fleet_manager
 from independent import run_independent_planner
 from prioritized import run_prioritized_planner
@@ -157,7 +157,7 @@ def spawn_aircrafts(t, nodes_dict, schedule):
     new_aircraft = []
     for spawn_time, flight_id, a_d, start_node, goal_node in schedule:
         if abs(spawn_time - t) < 1e-9:
-            new_aircraft.append(Aircraft(flight_id, a_d, start_node, goal_node, spawn_time, nodes_dict))
+            new_aircraft.append(GSE(flight_id, a_d, start_node, goal_node, spawn_time, nodes_dict))
     return new_aircraft
 
 def load_gate_plane_schedule(filepath):

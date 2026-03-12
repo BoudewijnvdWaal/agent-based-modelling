@@ -1,8 +1,8 @@
 from single_agent_planner import simple_single_agent_astar
 import math
 
-class Aircraft(object):
-    """Aircraft class, should be used in the creation of new aircraft."""
+class GSE(object):
+    """GSE (aircraft) agent used in the simulation."""
 
     def __init__(self, flight_id, a_d, start_node, goal_node, spawn_time, nodes_dict):
         """
