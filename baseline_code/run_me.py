@@ -17,12 +17,32 @@ from cbs import run_CBS
 
 #%% SET SIMULATION PARAMETERS
 #Input file names (used in import_layout) -> Do not change those unless you want to specify a new layout.
-nodes_file = "nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
-edges_file = "edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
+nodes_file = "Data/nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
+edges_file = "Data/edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
 
 #Parameters that can be changed:
-simulation_time = 20
+simulation_time = 1000
 planner = "Independent" #choose which planner to use (currently only Independent is implemented)
+
+#Aircraft spawn schedule: list of tuples (spawn_time, flight_id, type, start_node, goal_node)
+#Add or modify entries to change when/where aircraft appear.
+spawn_schedule = [
+    (1, 1, 'A', 1, 9),
+    (1, 2, 'D', 11, 3),
+    (3, 3, 'A', 4, 8),
+]
+
+#Gate stand occupancy: list of tuples (spawn_time, gate_node_id)
+#Gate node ids are listed in edges_EHAM.xlsx/nodes_EHAM.xlsx (type == "gate").
+gate_plane_schedule = [
+    (0.5, 7),
+    (2.0, 9),
+    (4.0, 14),
+    (6.0, 17),
+]
+
+#How long (in the same time units as t) a plane remains parked at a gate
+gate_turnaround_time = 3.0
 
 #Visualization (can also be changed)
 plot_graph = False    #show graph representation in NetworkX
@@ -133,6 +153,34 @@ def create_graph(nodes_dict, edges_dict, plot_graph = True):
         
     return graph
 
+def spawn_aircrafts(t, nodes_dict, schedule):
+    """Create aircraft whose spawn time matches the current timestep."""
+    new_aircraft = []
+    for spawn_time, flight_id, a_d, start_node, goal_node in schedule:
+        if abs(spawn_time - t) < 1e-9:
+            new_aircraft.append(Aircraft(flight_id, a_d, start_node, goal_node, spawn_time, nodes_dict))
+    return new_aircraft
+
+def spawn_gate_planes(t, nodes_dict, schedule, turnaround_time, next_id_ref):
+    """
+    Create static gate planes whose spawn time matches the current timestep.
+    Each plane remains visible until spawn_time + turnaround_time.
+    """
+    new_gate_planes = []
+    for spawn_time, gate_node_id in schedule:
+        if abs(spawn_time - t) < 1e-9:
+            if gate_node_id not in nodes_dict:
+                raise ValueError(f"Gate node {gate_node_id} not found in nodes_dict; update gate_plane_schedule.")
+            position = nodes_dict[gate_node_id]["xy_pos"]
+            new_gate_planes.append({
+                "id": next_id_ref[0],
+                "node_id": gate_node_id,
+                "xy_pos": position,
+                "despawn_time": spawn_time + turnaround_time
+            })
+            next_id_ref[0] += 1
+    return new_gate_planes
+
 #%% RUN SIMULATION
 # =============================================================================
 # 0. Initialization
@@ -142,6 +190,8 @@ graph = create_graph(nodes_dict, edges_dict, plot_graph)
 heuristics = calc_heuristics(graph, nodes_dict)
 
 aircraft_lst = []   #List which can contain aircraft agents
+gate_planes = []    #List of static gate planes
+gate_plane_next_id = [1]  #mutable ref so we can increment inside helper
 
 if visualization:
     map_properties = map_initialization(nodes_dict, edges_dict) #visualization properties
@@ -167,6 +217,12 @@ while running:
         pg.quit()
         print("Simulation Stopped")
         break 
+
+    #Spawn/remove static gate planes (parked aircraft that do not move)
+    new_gate_planes = spawn_gate_planes(t, nodes_dict, gate_plane_schedule, gate_turnaround_time, gate_plane_next_id)
+    if new_gate_planes:
+        gate_planes.extend(new_gate_planes)
+    gate_planes = [gp for gp in gate_planes if t < gp["despawn_time"] - 1e-9]
     
     #Visualization: Update map if visualization is true
     if visualization:
@@ -176,25 +232,18 @@ while running:
                 current_states[ac.id] = {"ac_id": ac.id,
                                          "xy_pos": ac.position,
                                          "heading": ac.heading}
-        escape_pressed = map_running(map_properties, current_states, t)
+        gate_states = {gp["id"]: {"id": gp["id"], "node_id": gp["node_id"], "xy_pos": gp["xy_pos"]} for gp in gate_planes}
+        escape_pressed = map_running(map_properties, current_states, gate_states, t)
         timer.sleep(visualization_speed) 
       
-    #Spawn aircraft for this timestep (use for example a random process)
-    #Aircraft(flight_id, a_d, start_node, goal_node, nodes_dict)
-    if t == 1:    
-        ac = Aircraft(1, 'A', 1, 9,t, nodes_dict) #As an example we will create one aicraft arriving at node 37 with the goal of reaching node 36
-        ac1 = Aircraft(2, 'D', 11, 3,t, nodes_dict)#As an example we will create one aicraft arriving at node 36 with the goal of reaching node 37
-        aircraft_lst.append(ac)
-        aircraft_lst.append(ac1)
-
-    if t == 3:
-        ac3 = Aircraft(3, 'A', 4, 8, t, nodes_dict)
-        aircraft_lst.append(ac3)
-        
+    #Spawn aircraft whose scheduled spawn time matches this timestep
+    new_aircraft = spawn_aircrafts(t, nodes_dict, spawn_schedule)
+    if new_aircraft:
+        aircraft_lst.extend(new_aircraft)
+         
     #Do planning 
     if planner == "Independent":     
-        if t == 1: #(Hint: Think about the condition that triggers (re)planning) 
-            run_independent_planner(aircraft_lst, nodes_dict, edges_dict, heuristics, t)
+        run_independent_planner(aircraft_lst, nodes_dict, edges_dict, heuristics, t)
     elif planner == "Prioritized":
         run_prioritized_planner()
     elif planner == "CBS":
