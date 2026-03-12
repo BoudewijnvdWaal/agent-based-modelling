@@ -17,8 +17,8 @@ from cbs import run_CBS
 
 #%% SET SIMULATION PARAMETERS
 #Input file names (used in import_layout) -> Do not change those unless you want to specify a new layout.
-nodes_file = "nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
-edges_file = "edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
+nodes_file = "Data/nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
+edges_file = "Data/edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
 
 #Parameters that can be changed:
 #Time scaling: 1 simulation time unit = 1 real minute.
