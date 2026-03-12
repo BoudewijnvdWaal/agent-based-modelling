@@ -306,10 +306,15 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
                                    min_x, max_y, x_range, y_range)
             
     if disp_time:
-      plot_text(scr, "timestep", black, 30, reso, min_x + 0.90 * x_range, max_y - 0.03 * y_range, min_x, max_y,
+      # Convert simulation time (units of 1 minute) to clock time HH:MM
+      sim_minutes = round(t)  # 1 sim unit = 1 minute
+      hours = (sim_minutes // 60) % 24
+      minutes = sim_minutes % 60
+      clock_str = f"{hours:02d}:{minutes:02d}"
+      plot_text(scr, "time", black, 30, reso, min_x + 0.90 * x_range, max_y - 0.03 * y_range, min_x, max_y,
                 x_range, y_range)
       time = t
-      plot_text(scr, str(time).zfill(2), black, 25, reso, min_x + 0.90 * x_range, max_y - 0.06 * y_range, min_x, max_y, x_range, y_range)
+      plot_text(scr, clock_str, black, 25, reso, min_x + 0.90 * x_range, max_y - 0.06 * y_range, min_x, max_y, x_range, y_range)
 
     if disp_aircaft_id:  # if the aircraft id has to be displayed
         for aircraft in current_states.keys():

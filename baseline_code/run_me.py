@@ -21,33 +21,35 @@ nodes_file = "nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, 
 edges_file = "edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
 
 #Parameters that can be changed:
-simulation_time = 100
+#Time scaling: 1 simulation time unit = 1 real minute.
+#The simulation loop uses dt = 1, so each while-loop tick advances 1 real minute.
+simulation_time = 12 * 60  # = 720 time units (covers 12 real hours)
 planner = "Independent" #choose which planner to use (currently only Independent is implemented)
 
 #Aircraft spawn schedule: list of tuples (spawn_time, flight_id, type, start_node, goal_node)
 #Add or modify entries to change when/where aircraft appear.
 spawn_schedule = [
-    (1, 1, 'A', 1, 9),
-    (1, 2, 'D', 11, 3),
-    (3, 3, 'A', 4, 8),
+    (10, 1, 'A', 1, 9),
+    (10, 2, 'D', 11, 3),
+    (30, 3, 'A', 4, 8),
 ]
 
 #Gate stand occupancy: list of tuples (spawn_time, gate_node_id)
 #Gate node ids are listed in edges_EHAM.xlsx/nodes_EHAM.xlsx (type == "gate").
 gate_plane_schedule = [
-    (0.5, 7),
-    (2.0, 9),
-    (4.0, 14),
-    (6.0, 17),
+    (5, 7),
+    (20, 9),
+    (40, 14),
+    (60, 17),
 ]
 
 #How long (in the same time units as t) a plane remains parked at a gate
-gate_turnaround_time = 3.0
+gate_turnaround_time = 45.0
 
 #Visualization (can also be changed)
 plot_graph = False    #show graph representation in NetworkX
 visualization = True        #pygame visualization
-visualization_speed = 0.01 #set at 0.1 as default
+visualization_speed = 0.05 #set at 0.1 as default
 
 #%%Function definitions
 def import_layout(nodes_file, edges_file):
@@ -204,7 +206,7 @@ if visualization:
 running=True
 escape_pressed = False
 time_end = simulation_time
-dt = 0.1 #should be factor of 0.5 (0.5/dt should be integer)
+dt = 1  # one simulation timestep equals 1 minute
 t= 0
 
 print("Simulation Started")
