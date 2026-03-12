@@ -59,6 +59,13 @@ def plot_aircraft(scr, reso, deg, x, y, x0, y0, x_range, y_range, x_shift=0, y_s
     rectlist[deg].centery = plane_map_y  # set y-location of the aircraft image
     scr.blit(piclist[deg], rectlist[deg])  # blit the aircraft image to the screen
 
+def plot_static_sprite(scr, sprite, rect_template, reso, x, y, x0, y0, x_range, y_range, x_shift=0, y_shift=0):
+    """Draw a non-rotating sprite (used for parked gate planes)."""
+    rect = rect_template.copy()
+    rect.centerx = c2m_x(x, x0, reso[0], x_range, x_shift)
+    rect.centery = c2m_y(y, y0, reso[1], y_range, y_shift)
+    scr.blit(sprite, rect)
+
 def plot_line(scr, color_code, reso, radius, coord_1, coord_2, x0, y0, x_range, y_range, x_shift=0, y_shift=0):
     wp_map_x_1 = c2m_x(coord_1[0], x0, reso[0], x_range, x_shift)  # get x-pixel of source
     wp_map_y_1 = c2m_y(coord_1[1], y0, reso[1], y_range, y_shift)  # get y-pixel of source
@@ -119,12 +126,22 @@ def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
         piclist.append(pg.transform.rotozoom(plane_pic, i, scale_factor))
         rectlist.append(piclist[i].get_rect())  # get rectangular surface of the pic
 
+    # Static gate-plane sprite (non-rotating)
+    gate_plane_path = os.path.join(os.getcwd(), "blue-plane-hi.bmp")
+    gate_plane_pic = pg.image.load(gate_plane_path).convert_alpha()
+    gate_target_w = 28
+    gate_scale_factor = gate_target_w / gate_plane_pic.get_width()
+    gate_plane_pic = pg.transform.rotozoom(gate_plane_pic, 0, gate_scale_factor)
+    gate_plane_rect = gate_plane_pic.get_rect()
+
     map_properties['outer_reso'] = outer_reso  # store created information (resolution)
     map_properties['inner_reso'] = inner_reso  # resolution airport layout
     map_properties['scr'] = scr  # background
     map_properties['scrrect'] = scrrect  # surface of background
     map_properties['piclist'] = piclist  # aircraft data
     map_properties['rectlist'] = rectlist  # aircraft surface
+    map_properties['gate_plane_pic'] = gate_plane_pic  # parked aircraft sprite
+    map_properties['gate_plane_rect'] = gate_plane_rect  # parked aircraft surface
     map_properties['horizontal_sep'] = horizontal_sep  # margin around screen
 
     map_get_background(map_properties, nodes_dict, edges_dict)  # create the background layout
@@ -242,15 +259,17 @@ def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_r
 
 #%% Update map during running
 
-def map_running(map_properties, current_states, t):  # function to update the map
+def map_running(map_properties, current_states, gate_states, t):  # function to update the map
     """
-    Function updates Pygame map based on the map_properties, current state of the vehicles and the time.
+    Function updates Pygame map based on the map_properties, current state of the vehicles,
+    parked gate planes, and the time.
     Collissions are detected if two aircraft are at the same xy_position. HINT: Is a collision the only conflict?    
     If escape key is pressed, pygame closes.
     If "p" key is pressed, pygame pauses. If enter is pressed pygame continues.
     INPUT:
         - map_properties = dict with properties as created in map_intialization.
         - current_states = dict with id, heading and xy_pos of all active aircraft.
+        - gate_states = dict with id and xy_pos of parked gate planes.
         - t = time.
     RETURNS:
         - Function updates pygame.
@@ -266,6 +285,7 @@ def map_running(map_properties, current_states, t):  # function to update the ma
     max_y = map_properties['max_y']  # get y0 (measured from above)
     y_range = map_properties['y_range']  # get vertical range
     background = map_properties['background']  # get layout background
+    time = t  # keep local copy for on-screen prints/collision logging
 
     layout = pg.image.fromstring(background, scrrect.size, "RGB")  # transform background from string to image
     scr.blit(layout, scrrect)  # print layout on screen
@@ -277,6 +297,13 @@ def map_running(map_properties, current_states, t):  # function to update the ma
             x_pos = current_states[aircraft]["xy_pos"][0]
             y_pos = current_states[aircraft]["xy_pos"][1]
             plot_aircraft(scr, reso, heading, x_pos, y_pos, min_x, max_y, x_range, y_range)
+        if gate_states:
+            gate_pic = map_properties.get('gate_plane_pic')
+            gate_rect = map_properties.get('gate_plane_rect')
+            for gate_plane in gate_states.values():
+                plot_static_sprite(scr, gate_pic, gate_rect, reso,
+                                   gate_plane["xy_pos"][0], gate_plane["xy_pos"][1],
+                                   min_x, max_y, x_range, y_range)
             
     if disp_time:
       plot_text(scr, "timestep", black, 30, reso, min_x + 0.90 * x_range, max_y - 0.03 * y_range, min_x, max_y,
@@ -290,6 +317,9 @@ def map_running(map_properties, current_states, t):  # function to update the ma
             col = red
             plot_text(scr, id_string, col, 14, reso, current_states[aircraft]["xy_pos"][0], current_states[aircraft]["xy_pos"][1], min_x, max_y, x_range, y_range, 0,
                       25)
+        for gate_plane in gate_states.values():
+            id_string = 'G: ' + str(gate_plane["id"])
+            plot_text(scr, id_string, blue, 14, reso, gate_plane["xy_pos"][0], gate_plane["xy_pos"][1], min_x, max_y, x_range, y_range, 0, 20)
 
     collision=False
     for ac1 in current_states:
