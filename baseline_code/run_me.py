@@ -10,7 +10,8 @@ import time as timer
 import pygame as pg
 from single_agent_planner import calc_heuristics
 from visualization import map_initialization, map_running
-from Aircraft import Aircraft
+from GSE import Aircraft
+from Fleet_manager import Fleet_manager
 from independent import run_independent_planner
 from prioritized import run_prioritized_planner
 from cbs import run_CBS
@@ -215,6 +216,7 @@ aircraft_lst = []   #List which can contain aircraft agents
 gate_planes = []    #List of static gate planes
 gate_plane_next_id = [1]  #mutable ref so we can increment inside helper
 gate_plane_schedule = load_gate_plane_schedule(plane_data_file)
+fleet_manager = Fleet_manager(nodes_dict)
 
 if visualization:
     map_properties = map_initialization(nodes_dict, edges_dict) #visualization properties
@@ -279,7 +281,10 @@ while running:
     for ac in aircraft_lst: 
         if ac.status == "taxiing": 
             ac.move(dt, t)
-                           
+    
+    #Update gate occupancy map for fleet management
+    fleet_manager.update_gate_status(gate_planes, aircraft_lst, t)
+
     t = t + dt
           
 # =============================================================================
