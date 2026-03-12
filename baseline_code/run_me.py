@@ -19,6 +19,7 @@ from cbs import run_CBS
 #Input file names (used in import_layout) -> Do not change those unless you want to specify a new layout.
 nodes_file = "Data/nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
 edges_file = "Data/edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
+plane_data_file = "Data/Plane_data.xlsx"
 
 #Parameters that can be changed:
 #Time scaling: 1 simulation time unit = 1 real minute.
@@ -34,14 +35,9 @@ spawn_schedule = [
     (30, 3, 'A', 4, 8),
 ]
 
-#Gate stand occupancy: list of tuples (spawn_time, gate_node_id)
-#Gate node ids are listed in edges_EHAM.xlsx/nodes_EHAM.xlsx (type == "gate").
-gate_plane_schedule = [
-    (5, 7),
-    (20, 9),
-    (40, 14),
-    (60, 17),
-]
+#Gate stand occupancy: loaded from Plane_data.xlsx (columns: Gate, SIBT).
+#Each entry becomes (spawn_time_minutes, gate_node_id)
+gate_plane_schedule = []
 
 #How long (in the same time units as t) a plane remains parked at a gate
 gate_turnaround_time = 45.0
@@ -163,6 +159,30 @@ def spawn_aircrafts(t, nodes_dict, schedule):
             new_aircraft.append(Aircraft(flight_id, a_d, start_node, goal_node, spawn_time, nodes_dict))
     return new_aircraft
 
+def load_gate_plane_schedule(filepath):
+    """
+    Load gate-plane spawn schedule from an Excel file with columns:
+    - Gate: node id where the plane is parked
+    - SIBT: spawn time in minutes from simulation start
+    """
+    if not os.path.isabs(filepath):
+        filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), filepath)
+    df = pd.read_excel(filepath)
+    required_cols = {"Gate", "SIBT"}
+    if not required_cols.issubset(df.columns):
+        raise ValueError(f"Plane data file {filepath} must contain columns {required_cols}")
+    schedule = []
+    for _, row in df.iterrows():
+        try:
+            gate_id = int(row["Gate"])
+            spawn_time = float(row["SIBT"])
+        except Exception as exc:
+            raise ValueError(f"Invalid row in {filepath}: {row}") from exc
+        schedule.append((spawn_time, gate_id))
+    # sort by time to make behavior deterministic
+    schedule.sort(key=lambda x: x[0])
+    return schedule
+
 def spawn_gate_planes(t, nodes_dict, schedule, turnaround_time, next_id_ref):
     """
     Create static gate planes whose spawn time matches the current timestep.
@@ -194,6 +214,7 @@ heuristics = calc_heuristics(graph, nodes_dict)
 aircraft_lst = []   #List which can contain aircraft agents
 gate_planes = []    #List of static gate planes
 gate_plane_next_id = [1]  #mutable ref so we can increment inside helper
+gate_plane_schedule = load_gate_plane_schedule(plane_data_file)
 
 if visualization:
     map_properties = map_initialization(nodes_dict, edges_dict) #visualization properties
