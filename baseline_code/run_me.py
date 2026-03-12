@@ -10,8 +10,7 @@ import time as timer
 import pygame as pg
 from single_agent_planner import calc_heuristics
 from visualization import map_initialization, map_running
-from GSE import Aircraft
-from Fleet_manager import Fleet_manager
+from Aircraft import Aircraft
 from independent import run_independent_planner
 from prioritized import run_prioritized_planner
 from cbs import run_CBS
@@ -20,33 +19,35 @@ from cbs import run_CBS
 #Input file names (used in import_layout) -> Do not change those unless you want to specify a new layout.
 nodes_file = "Data/nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
 edges_file = "Data/edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
-plane_data_file = "Data/Plane_data.xlsx"
 
 #Parameters that can be changed:
-#Time scaling: 1 simulation time unit = 1 real minute.
-#The simulation loop uses dt = 1, so each while-loop tick advances 1 real minute.
-simulation_time = 12 * 60  # = 720 time units (covers 12 real hours)
+simulation_time = 1000
 planner = "Independent" #choose which planner to use (currently only Independent is implemented)
 
 #Aircraft spawn schedule: list of tuples (spawn_time, flight_id, type, start_node, goal_node)
 #Add or modify entries to change when/where aircraft appear.
 spawn_schedule = [
-    (10, 1, 'A', 1, 9),
-    (10, 2, 'D', 11, 3),
-    (30, 3, 'A', 4, 8),
+    (1, 1, 'A', 1, 9),
+    (1, 2, 'D', 11, 3),
+    (3, 3, 'A', 4, 8),
 ]
 
-#Gate stand occupancy: loaded from Plane_data.xlsx (columns: Gate, SIBT).
-#Each entry becomes (spawn_time_minutes, gate_node_id)
-gate_plane_schedule = []
+#Gate stand occupancy: list of tuples (spawn_time, gate_node_id)
+#Gate node ids are listed in edges_EHAM.xlsx/nodes_EHAM.xlsx (type == "gate").
+gate_plane_schedule = [
+    (0.5, 7),
+    (2.0, 9),
+    (4.0, 14),
+    (6.0, 17),
+]
 
 #How long (in the same time units as t) a plane remains parked at a gate
-gate_turnaround_time = 45.0
+gate_turnaround_time = 3.0
 
 #Visualization (can also be changed)
 plot_graph = False    #show graph representation in NetworkX
 visualization = True        #pygame visualization
-visualization_speed = 0.05 #set at 0.1 as default
+visualization_speed = 0.1 #set at 0.1 as default
 
 #%%Function definitions
 def import_layout(nodes_file, edges_file):
@@ -160,30 +161,6 @@ def spawn_aircrafts(t, nodes_dict, schedule):
             new_aircraft.append(Aircraft(flight_id, a_d, start_node, goal_node, spawn_time, nodes_dict))
     return new_aircraft
 
-def load_gate_plane_schedule(filepath):
-    """
-    Load gate-plane spawn schedule from an Excel file with columns:
-    - Gate: node id where the plane is parked
-    - SIBT: spawn time in minutes from simulation start
-    """
-    if not os.path.isabs(filepath):
-        filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), filepath)
-    df = pd.read_excel(filepath)
-    required_cols = {"Gate", "SIBT"}
-    if not required_cols.issubset(df.columns):
-        raise ValueError(f"Plane data file {filepath} must contain columns {required_cols}")
-    schedule = []
-    for _, row in df.iterrows():
-        try:
-            gate_id = int(row["Gate"])
-            spawn_time = float(row["SIBT"])
-        except Exception as exc:
-            raise ValueError(f"Invalid row in {filepath}: {row}") from exc
-        schedule.append((spawn_time, gate_id))
-    # sort by time to make behavior deterministic
-    schedule.sort(key=lambda x: x[0])
-    return schedule
-
 def spawn_gate_planes(t, nodes_dict, schedule, turnaround_time, next_id_ref):
     """
     Create static gate planes whose spawn time matches the current timestep.
@@ -215,8 +192,6 @@ heuristics = calc_heuristics(graph, nodes_dict)
 aircraft_lst = []   #List which can contain aircraft agents
 gate_planes = []    #List of static gate planes
 gate_plane_next_id = [1]  #mutable ref so we can increment inside helper
-gate_plane_schedule = load_gate_plane_schedule(plane_data_file)
-fleet_manager = Fleet_manager(nodes_dict)
 
 if visualization:
     map_properties = map_initialization(nodes_dict, edges_dict) #visualization properties
@@ -229,7 +204,7 @@ if visualization:
 running=True
 escape_pressed = False
 time_end = simulation_time
-dt = 1  # one simulation timestep equals 1 minute
+dt = 0.1 #should be factor of 0.5 (0.5/dt should be integer)
 t= 0
 
 print("Simulation Started")
@@ -281,10 +256,7 @@ while running:
     for ac in aircraft_lst: 
         if ac.status == "taxiing": 
             ac.move(dt, t)
-    
-    #Update gate occupancy map for fleet management
-    fleet_manager.update_gate_status(gate_planes, aircraft_lst, t)
-
+                           
     t = t + dt
           
 # =============================================================================
