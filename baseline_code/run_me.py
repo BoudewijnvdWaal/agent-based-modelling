@@ -17,11 +17,11 @@ from cbs import run_CBS
 
 #%% SET SIMULATION PARAMETERS
 #Input file names (used in import_layout) -> Do not change those unless you want to specify a new layout.
-nodes_file = "nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
-edges_file = "edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
+nodes_file = "Data/nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
+edges_file = "Data/edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
 
 #Parameters that can be changed:
-simulation_time = 100
+simulation_time = 1000
 planner = "Independent" #choose which planner to use (currently only Independent is implemented)
 
 #Aircraft spawn schedule: list of tuples (spawn_time, flight_id, type, start_node, goal_node)
@@ -47,7 +47,7 @@ gate_turnaround_time = 3.0
 #Visualization (can also be changed)
 plot_graph = False    #show graph representation in NetworkX
 visualization = True        #pygame visualization
-visualization_speed = 0.01 #set at 0.1 as default
+visualization_speed = 0.1 #set at 0.1 as default
 
 #%%Function definitions
 def import_layout(nodes_file, edges_file):

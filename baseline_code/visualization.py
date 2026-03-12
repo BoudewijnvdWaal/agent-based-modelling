@@ -116,7 +116,7 @@ def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
     scr = pg.display.set_mode(outer_reso)
     scrrect = scr.get_rect()  # get rectangular area of the surface
     scr.fill(white)  # set background color
-    plane_pic_path = os.path.join(os.getcwd(), "Red_Car.png")
+    plane_pic_path = os.path.join(os.getcwd(), "Figures/Red_Car.png")
     plane_pic = pg.image.load(plane_pic_path).convert_alpha()  # car sprite with transparency
     # Scale sprite to a consistent width (~32 px) to match the old plane icon size
     target_w = 32
@@ -127,7 +127,7 @@ def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
         rectlist.append(piclist[i].get_rect())  # get rectangular surface of the pic
 
     # Static gate-plane sprite (non-rotating)
-    gate_plane_path = os.path.join(os.getcwd(), "blue-plane-hi.bmp")
+    gate_plane_path = os.path.join(os.getcwd(), "Figures/blue-plane-hi.bmp")
     gate_plane_pic = pg.image.load(gate_plane_path).convert_alpha()
     gate_target_w = 28
     gate_scale_factor = gate_target_w / gate_plane_pic.get_width()
