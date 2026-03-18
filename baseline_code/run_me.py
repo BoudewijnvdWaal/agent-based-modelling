@@ -12,29 +12,23 @@ from single_agent_planner import calc_heuristics
 from visualization import map_initialization, map_running
 from GSE import GSE
 from Fleet_manager import Fleet_manager
-from independent import run_independent_planner
-from prioritized import run_prioritized_planner
-from cbs import run_CBS
+from auction_system import AuctionSystem
 
-#%% SET SIMULATION PARAMETERS
-#Input file names (used in import_layout) -> Do not change those unless you want to specify a new layout.
-nodes_file = "Data/nodes_EHAM.xlsx" #xlsx file with for each node: id, x_pos, y_pos, type
-edges_file = "Data/edges_EHAM.xlsx" #xlsx file with for each edge: from  (node), to (node), length
+# =============================================================================
+# SIMULATION PARAMETERS  (pas hier aan)
+# =============================================================================
+nodes_file = "Data/nodes_EHAM.xlsx"
+edges_file = "Data/edges_EHAM.xlsx"
 
-#Parameters that can be changed:
 simulation_time = 1000
-planner = "Independent" #choose which planner to use (currently only Independent is implemented)
+planner = "Independent"
 
-#Aircraft spawn schedule: list of tuples (spawn_time, flight_id, type, start_node, goal_node)
-#Add or modify entries to change when/where aircraft appear.
-spawn_schedule = [
-    (1, 1, 'A', 1, 9),
-    (1, 2, 'D', 11, 3),
-    (3, 3, 'A', 4, 8),
-]
+# Vliegtuigen rijden NIET meer over de taxibaan — ze spawnen direct bij een gate
+# als statisch gate_plane object. GSEs zijn de enige bewegende agents.
+# Laat deze lijst leeg, of verwijder hem helemaal.
+spawn_schedule = []
 
-#Gate stand occupancy: list of tuples (spawn_time, gate_node_id)
-#Gate node ids are listed in edges_EHAM.xlsx/nodes_EHAM.xlsx (type == "gate").
+# Statische vliegtuigen bij gates: (spawn_time, gate_node_id)
 gate_plane_schedule = [
     (0.5, 7),
     (2.0, 9),
@@ -42,15 +36,30 @@ gate_plane_schedule = [
     (6.0, 17),
 ]
 
-#How long (in the same time units as t) a plane remains parked at a gate
+# Hoe lang een vliegtuig aan de gate staat (zelfde tijdseenheid als t)
 gate_turnaround_time = 3.0
 
-#Visualization (can also be changed)
-plot_graph = False    #show graph representation in NetworkX
-visualization = True        #pygame visualization
-visualization_speed = 0.1 #set at 0.1 as default
+# --- [NIEUW] GSE configuratie ---
+# Elke tuple: (gse_id, start_node)
+# start_node moet een 'charging'-type node zijn (= depot).
+# Pas de node-ids aan zodra je weet welke nodes 'charging' zijn in jouw layout.
+GSE_SPAWN_CONFIG = [
+    (1, 2),   # GSE 1 start op node 2
+    (2, 2),   # GSE 2 start op node 2
+    (3, 2),   # GSE 3 start op node 2
+]
+DEPOT_NODE = 2   # node_id van het laadstation/depot; pas aan naar jouw layout
 
-#%%Function definitions
+# Visualisatie
+plot_graph         = False
+visualization      = True
+visualization_speed = 0.1
+
+
+# =============================================================================
+# FUNCTIE-DEFINITIES  (ongewijzigd t.o.v. origineel, behalve spawn_aircrafts)
+# =============================================================================
+
 def import_layout(nodes_file, edges_file):
     """
     Imports layout information from xlsx files and converts this into dictionaries.
@@ -59,108 +68,91 @@ def import_layout(nodes_file, edges_file):
         - edges_file = xlsx file with edge input data
     RETURNS:
         - nodes_dict = dictionary with nodes and node properties
-        - edges_dict = dictionary with edges annd edge properties
-        - start_and_goal_locations = dictionary with node ids for arrival runways, departure runways and gates 
+        - edges_dict = dictionary with edges and edge properties
+        - start_and_goal_locations = dictionary with node ids for arrival runways,
+          departure runways and gates
     """
-    gates_xy = []   #lst with (x,y) positions of gates
-    cargoep_xy = [] #lst with (x,y) positions of entry points of departure runways
-    chargingrr_xy = [] #lst with (x,y) positions of exit points of arrival runways
-    
+    gates_xy      = []
+    cargoep_xy    = []
+    chargingrr_xy = []
+
     df_nodes = pd.read_excel(os.getcwd() + "/" + nodes_file)
     df_edges = pd.read_excel(os.getcwd() + "/" + edges_file)
-    
-    #Create nodes_dict from df_nodes
+
     nodes_dict = {}
     for i, row in df_nodes.iterrows():
-        node_properties = {"id": row["id"],
-                           "x_pos": row["x_pos"],
-                           "y_pos": row["y_pos"],
-                           "xy_pos": (row["x_pos"],row["y_pos"]),
-                           "type": row["type"],
-                           "neighbors": set()
-                           }
+        node_properties = {
+            "id":        row["id"],
+            "x_pos":     row["x_pos"],
+            "y_pos":     row["y_pos"],
+            "xy_pos":    (row["x_pos"], row["y_pos"]),
+            "type":      row["type"],
+            "neighbors": set()
+        }
         node_id = row["id"]
         nodes_dict[node_id] = node_properties
-        
-        #Add node type
-        if row["type"] == "cargo":
-            cargoep_xy.append((row["x_pos"],row["y_pos"]))
-        elif row["type"] == "charging":
-            chargingrr_xy.append((row["x_pos"],row["y_pos"]))
-        elif row["type"] == "gate":
-            gates_xy.append((row["x_pos"],row["y_pos"]))
 
-    #Specify node ids of gates, departure runways and arrival runways in a dict
-    start_and_goal_locations = {"gates": gates_xy, 
-                                "dep_rwy": cargoep_xy,
-                                "arr_rwy": chargingrr_xy}
-    
-    #Create edges_dict from df_edges
+        if row["type"] == "cargo":
+            cargoep_xy.append((row["x_pos"], row["y_pos"]))
+        elif row["type"] == "charging":
+            chargingrr_xy.append((row["x_pos"], row["y_pos"]))
+        elif row["type"] == "gate":
+            gates_xy.append((row["x_pos"], row["y_pos"]))
+
+    start_and_goal_locations = {
+        "gates":   gates_xy,
+        "dep_rwy": cargoep_xy,
+        "arr_rwy": chargingrr_xy
+    }
+
     edges_dict = {}
     for i, row in df_edges.iterrows():
-        edge_id = (row["from"],row["to"])
-        from_node =  edge_id[0]
-        to_node = edge_id[1]
+        edge_id       = (row["from"], row["to"])
+        from_node     = edge_id[0]
+        to_node       = edge_id[1]
         start_end_pos = (nodes_dict[from_node]["xy_pos"], nodes_dict[to_node]["xy_pos"])
-        edge_properties = {"id": edge_id,
-                           "from": row["from"],
-                           "to": row["to"],
-                           "length": row["length"],
-                           "weight": row["length"],
-                           "start_end_pos": start_end_pos
-                           }
+        edge_properties = {
+            "id":            edge_id,
+            "from":          row["from"],
+            "to":            row["to"],
+            "length":        row["length"],
+            "weight":        row["length"],
+            "start_end_pos": start_end_pos
+        }
         edges_dict[edge_id] = edge_properties
-   
-    #Add neighbor nodes to nodes_dict based on edges between nodes
+
     for edge in edges_dict:
-        from_node = edge[0]
-        to_node = edge[1]
-        nodes_dict[from_node]["neighbors"].add(to_node)  
-    
+        nodes_dict[edge[0]]["neighbors"].add(edge[1])
+
     return nodes_dict, edges_dict, start_and_goal_locations
 
-def create_graph(nodes_dict, edges_dict, plot_graph = True):
+
+def create_graph(nodes_dict, edges_dict, plot_graph=True):
     """
-    Creates networkX graph based on nodes and edges and plots 
-    INPUT:
-        - nodes_dict = dictionary with nodes and node properties
-        - edges_dict = dictionary with edges annd edge properties
-        - plot_graph = boolean (True/False) If True, function plots NetworkX graph. True by default.
-    RETURNS:
-        - graph = networkX graph object
+    Creates networkX graph based on nodes and edges and optionally plots it.
     """
-    
-    graph = nx.DiGraph() #create directed graph in NetworkX
-    
-    #Add nodes and edges to networkX graph
-    for node in nodes_dict.keys():
-        graph.add_node(node, 
-                       node_id = nodes_dict[node]["id"],
-                       xy_pos = nodes_dict[node]["xy_pos"],
+    graph = nx.DiGraph()
+
+    for node in nodes_dict:
+        graph.add_node(node,
+                       node_id   = nodes_dict[node]["id"],
+                       xy_pos    = nodes_dict[node]["xy_pos"],
                        node_type = nodes_dict[node]["type"])
-        
-    for edge in edges_dict.keys():
-        graph.add_edge(edge[0], edge[1], 
-                       edge_id = edge,
-                       from_node =  edges_dict[edge]["from"],
-                       to_node = edges_dict[edge]["to"],
-                       weight = edges_dict[edge]["length"])
-    
-    #Plot networkX graph
+
+    for edge in edges_dict:
+        graph.add_edge(edge[0], edge[1],
+                       edge_id   = edge,
+                       from_node = edges_dict[edge]["from"],
+                       to_node   = edges_dict[edge]["to"],
+                       weight    = edges_dict[edge]["length"])
+
     if plot_graph:
         plt.figure()
         node_locations = nx.get_node_attributes(graph, 'xy_pos')
         nx.draw(graph, node_locations, with_labels=True, node_size=100, font_size=10)
-        
+
     return graph
 
-def spawn_aircrafts(t, nodes_dict, schedule):
-    """Create aircraft whose spawn time matches the current timestep."""
-    new_aircraft = []
-    for spawn_time, flight_id, a_d, start_node, goal_node in schedule:
-        if abs(spawn_time - t) < 1e-9:
-            new_aircraft.append(GSE(flight_id, a_d, start_node, goal_node, spawn_time, nodes_dict))
-    return new_aircraft
 
 def spawn_gate_planes(t, nodes_dict, schedule, turnaround_time, next_id_ref):
     """
@@ -171,96 +163,180 @@ def spawn_gate_planes(t, nodes_dict, schedule, turnaround_time, next_id_ref):
     for spawn_time, gate_node_id in schedule:
         if abs(spawn_time - t) < 1e-9:
             if gate_node_id not in nodes_dict:
-                raise ValueError(f"Gate node {gate_node_id} not found in nodes_dict; update gate_plane_schedule.")
+                raise ValueError(
+                    f"Gate node {gate_node_id} not found in nodes_dict; "
+                    "update gate_plane_schedule."
+                )
             position = nodes_dict[gate_node_id]["xy_pos"]
             new_gate_planes.append({
-                "id": next_id_ref[0],
-                "node_id": gate_node_id,
-                "xy_pos": position,
-                "despawn_time": spawn_time + turnaround_time
+                "id":          next_id_ref[0],
+                "node_id":     gate_node_id,
+                "xy_pos":      position,
+                "despawn_time": spawn_time + turnaround_time,
+                "serviced":    False   # [NIEUW] bijhouden of er al een GSE is toegewezen
             })
             next_id_ref[0] += 1
     return new_gate_planes
 
-#%% RUN SIMULATION
+
 # =============================================================================
-# 0. Initialization
+# INITIALISATIE
 # =============================================================================
 nodes_dict, edges_dict, start_and_goal_locations = import_layout(nodes_file, edges_file)
-graph = create_graph(nodes_dict, edges_dict, plot_graph)
+graph      = create_graph(nodes_dict, edges_dict, plot_graph)
 heuristics = calc_heuristics(graph, nodes_dict)
 
-aircraft_lst = []   #List which can contain aircraft agents
-gate_planes = []    #List of static gate planes
-gate_plane_next_id = [1]  #mutable ref so we can increment inside helper
+# --- Statische gate-vliegtuigen ---
+gate_planes        = []
+gate_plane_next_id = [1]
+
+# --- [NIEUW] Maak GSE-vloot aan ---
+gse_lst = []
+for gse_id, start_node in GSE_SPAWN_CONFIG:
+    gse = GSE(gse_id=gse_id, start_node=start_node,
+              nodes_dict=nodes_dict, depot_node=DEPOT_NODE)
+    gse_lst.append(gse)
+print(f"[Init] {len(gse_lst)} GSEs aangemaakt: {gse_lst}")
+
+# --- [NIEUW] Fleet Manager en Auction System ---
+fleet_manager  = Fleet_manager(nodes_dict)
+auction_system = AuctionSystem(gse_lst)
+
+# Bijhouden welke gate_plane node_ids al een GSE toegewezen hebben gekregen
+# zodat we niet bij elke tijdstap opnieuw een veiling houden voor dezelfde gate.
+already_auctioned = set()
 
 if visualization:
-    map_properties = map_initialization(nodes_dict, edges_dict) #visualization properties
+    map_properties = map_initialization(nodes_dict, edges_dict)
+
 
 # =============================================================================
-# 1. While loop and visualization
+# SIMULATIELUS
 # =============================================================================
- 
-#Start of while loop    
-running=True
+running       = True
 escape_pressed = False
-time_end = simulation_time
-dt = 0.1 #should be factor of 0.5 (0.5/dt should be integer)
-t= 0
+time_end      = simulation_time
+dt            = 0.1   # moet een factor van 0.5 zijn
+t             = 0
 
 print("Simulation Started")
 while running:
-    t= round(t,2)    
-       
-    #Check conditions for termination
-    if t >= time_end or escape_pressed: 
+    t = round(t, 2)
+
+    # --- Stopconditie ---
+    if t >= time_end or escape_pressed:
         running = False
         pg.quit()
         print("Simulation Stopped")
-        break 
+        break
 
-    #Spawn/remove static gate planes (parked aircraft that do not move)
-    new_gate_planes = spawn_gate_planes(t, nodes_dict, gate_plane_schedule, gate_turnaround_time, gate_plane_next_id)
+    # -------------------------------------------------------------------------
+    # Spawn / verwijder statische gate-vliegtuigen
+    # -------------------------------------------------------------------------
+    new_gate_planes = spawn_gate_planes(
+        t, nodes_dict, gate_plane_schedule, gate_turnaround_time, gate_plane_next_id
+    )
     if new_gate_planes:
         gate_planes.extend(new_gate_planes)
-    gate_planes = [gp for gp in gate_planes if t < gp["despawn_time"] - 1e-9]
-    
-    #Visualization: Update map if visualization is true
+
+    # Verwijder vliegtuigen waarvan de turnaround voorbij is EN waarvan de GSE is aangekomen.
+    # Een gate-plane blijft zichtbaar totdat de toegewezen GSE status "working" heeft op die gate,
+    # zodat vliegtuigen niet verdwijnen voordat ze bediend zijn.
+    def gse_has_arrived(gate_node_id):
+        """Geeft True als een GSE op deze gate staat met status 'working'."""
+        return any(
+            gse.status == "working" and gse.current_node == gate_node_id
+            for gse in gse_lst
+        )
+
+    despawned = [
+        gp for gp in gate_planes
+        if t >= gp["despawn_time"] - 1e-9 and (not gp["serviced"] or gse_has_arrived(gp["node_id"]))
+    ]
+    for gp in despawned:
+        already_auctioned.discard(gp["node_id"])
+    gate_planes = [gp for gp in gate_planes if gp not in despawned]
+
+    # -------------------------------------------------------------------------
+    # [NIEUW] Fleet Manager: update gate-bezettingskaart
+    # -------------------------------------------------------------------------
+    fleet_manager.update_gate_status(gate_planes, aircraft_lst=gse_lst, t=t)
+
+    # -------------------------------------------------------------------------
+    # [NIEUW] Auction: wijs GSEs toe aan gates die nog niet bediend worden
+    # -------------------------------------------------------------------------
+    unassigned_tasks = [
+        gp["node_id"]
+        for gp in gate_planes
+        if not gp["serviced"] and gp["node_id"] not in already_auctioned
+    ]
+
+    if unassigned_tasks:
+        assignments = auction_system.allocate_tasks(unassigned_tasks, heuristics)
+        for gse, gate_node_id in assignments:
+            already_auctioned.add(gate_node_id)
+            # Markeer het gate-vliegtuig als bediend
+            for gp in gate_planes:
+                if gp["node_id"] == gate_node_id:
+                    gp["serviced"] = True
+            # Plan het pad van de winnende GSE naar de gate
+            gse.plan_to_gate(gate_node_id, nodes_dict, heuristics, t)
+
+    # -------------------------------------------------------------------------
+    # [NIEUW] GSEs die 'needs_charging' zijn sturen naar het depot
+    # -------------------------------------------------------------------------
+    for gse in gse_lst:
+        if gse.status == "needs_charging":
+            gse.go_charge(nodes_dict, edges_dict, heuristics, t)
+
+    # -------------------------------------------------------------------------
+    # Visualisatie
+    # -------------------------------------------------------------------------
     if visualization:
-        current_states = {} #Collect current states of all aircraft
-        for ac in aircraft_lst:
-            if ac.status == "taxiing":
-                current_states[ac.id] = {"ac_id": ac.id,
-                                         "xy_pos": ac.position,
-                                         "heading": ac.heading}
-        gate_states = {gp["id"]: {"id": gp["id"], "node_id": gp["node_id"], "xy_pos": gp["xy_pos"]} for gp in gate_planes}
+        # Alleen GSEs worden gevisualiseerd als bewegende agents
+        current_states = {}
+        for gse in gse_lst:
+            if gse.status == "taxiing":
+                current_states[gse.id] = {
+                    "ac_id":   f"GSE {gse.id}",
+                    "xy_pos":  gse.position,
+                    "heading": gse.heading
+                }
+
+        gate_states = {
+            gp["id"]: {"id": gp["id"], "node_id": gp["node_id"], "xy_pos": gp["xy_pos"]}
+            for gp in gate_planes
+        }
         escape_pressed = map_running(map_properties, current_states, gate_states, t)
-        timer.sleep(visualization_speed) 
-      
-    #Spawn aircraft whose scheduled spawn time matches this timestep
-    new_aircraft = spawn_aircrafts(t, nodes_dict, spawn_schedule)
-    if new_aircraft:
-        aircraft_lst.extend(new_aircraft)
-         
-    #Do planning 
-    if planner == "Independent":     
-        run_independent_planner(aircraft_lst, nodes_dict, edges_dict, heuristics, t)
-    elif planner == "Prioritized":
-        run_prioritized_planner()
-    elif planner == "CBS":
-        run_CBS()
-    #elif planner == -> you may introduce other planners here
-    else:
-        raise Exception("Planner:", planner, "is not defined.")
-                       
-    #Move the aircraft that are taxiing
-    for ac in aircraft_lst: 
-        if ac.status == "taxiing": 
-            ac.move(dt, t)
-                           
+        timer.sleep(visualization_speed)
+
+    # -------------------------------------------------------------------------
+    # [NIEUW] Beweeg GSEs + update SoC
+    # -------------------------------------------------------------------------
+    for gse in gse_lst:
+        if gse.status == "taxiing":
+            gse.move(dt, t)
+        gse.update_soc(dt)
+
+    # -------------------------------------------------------------------------
+    # [NIEUW] GSEs die bij het depot zijn aangekomen: zet op 'charging'
+    # (move() zet status al op 'charging' via _on_goal_reached, dit is een
+    #  extra vangnet voor het geval de logica afwijkt)
+    # -------------------------------------------------------------------------
+    for gse in gse_lst:
+        if gse.status == "arrived" and gse.current_node == DEPOT_NODE:
+            gse.status = "charging"
+
     t = t + dt
-          
+
+
 # =============================================================================
-# 2. Implement analysis of output data here
+# ANALYSE VAN OUTPUTDATA
 # =============================================================================
-#what data do you want to show?
+# Voeg hier analyse toe, bijvoorbeeld:
+#   - Gemiddelde SoC over de tijd
+#   - Aantal voltooide taken per GSE
+#   - Conflicten of wachttijden
+print("\n--- Eindrapport GSEs ---")
+for gse in gse_lst:
+    print(gse)

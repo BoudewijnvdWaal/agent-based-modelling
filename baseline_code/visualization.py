@@ -90,10 +90,11 @@ def plot_text(scr, text_str, color_code, fontsize, reso, x, y, x0, y0, x_range, 
     textpos.centery = wp_map_y  # determine y-location of text string
     scr.blit(text, textpos)
 
-def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
+def map_initialization(nodes_dict, edges_dict, spawn_schedule=None):  # function to initialise mapf
     #print(edges_dict)
 
     map_properties = dict()  # create dict to return all properties
+    map_properties['spawn_schedule'] = spawn_schedule or []  # [NIEUW] sla spawn schema op
     map_get_range(nodes_dict, map_properties)  # get info about the screen range properties
 
     # Determine screen resolution. On Windows we can query user32; on macOS/Linux fall back to a fixed HD size.
@@ -145,6 +146,7 @@ def map_initialization(nodes_dict, edges_dict):  # function to initialise mapf
     map_properties['horizontal_sep'] = horizontal_sep  # margin around screen
 
     map_get_background(map_properties, nodes_dict, edges_dict)  # create the background layout
+
 
     return map_properties  # return all information
 
@@ -213,14 +215,16 @@ def map_get_background(map_properties, nodes_dict, edges_dict):
     x_range = map_properties['x_range']  # get horizontal range
     max_y = map_properties['max_y'] # get y0 (measured from above)
     y_range = map_properties['y_range']  # get vertical range
+    spawn_schedule = map_properties.get('spawn_schedule', [])  # [NIEUW]
 
-    map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_range, 0, 0)
+    map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_range, 0, 0,
+                   spawn_schedule=spawn_schedule)
 
     background = pg.image.tostring(scr, "RGB")  # transform image to string (faster reading during simulation
     map_properties['background'] = background  # store background
 
 
-def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_range, scr_x_shift, scr_y_shift): 
+def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_range, scr_x_shift, scr_y_shift, spawn_schedule=None): 
     #Print edges on map
     edges_created = set()
     for edge in edges_dict:
@@ -256,6 +260,27 @@ def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_r
         thisString = str(nodes_dict[node]['id'])  # create string with node ID
         plot_text(scr, thisString, black, 14, reso, wp_coordinate[0], wp_coordinate[1], min_x, max_y, x_range,
                   y_range, 10, 10)
+
+    # [NIEUW] Teken spawn-locaties van vliegtuigen als oranje cirkel met label
+    if spawn_schedule:
+        seen_spawn_nodes = {}  # node_id -> lijst van flight_ids die daar spawnen
+        for entry in spawn_schedule:
+            spawn_time, flight_id, a_d, start_node, goal_node = entry
+            if start_node not in seen_spawn_nodes:
+                seen_spawn_nodes[start_node] = []
+            seen_spawn_nodes[start_node].append(flight_id)
+
+        for node_id, flight_ids in seen_spawn_nodes.items():
+            if node_id in nodes_dict:
+                sx = nodes_dict[node_id]['x_pos']
+                sy = nodes_dict[node_id]['y_pos']
+                # Oranje ring rondom de node (iets groter dan de standaard cirkel)
+                plot_circle(scr, orange, reso, 8, [sx, sy], min_x, max_y, x_range, y_range,
+                            scr_x_shift, scr_y_shift)
+                # Label "S:1,2" boven de node
+                label = "S:" + ",".join(str(fid) for fid in flight_ids)
+                plot_text(scr, label, orange, 14, reso, sx, sy, min_x, max_y, x_range, y_range,
+                          scr_x_shift, scr_y_shift - 18)
 
 #%% Update map during running
 
