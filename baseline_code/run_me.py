@@ -29,8 +29,10 @@ simulation_duration_hours = 12
 simulation_time = simulation_duration_hours * 60  # 12 pseudo-hours = 720 simulated minutes
 planner = "Independent"
 
-# Hoe lang een vliegtuig aan de gate staat (zelfde tijdseenheid als t)
-gate_turnaround_time = 3.0
+# Service- en vertrektijden van vliegtuigen, in pseudo-minuten
+unloading_duration_minutes = 15
+loading_duration_minutes = 15
+departure_delay_minutes = 5
 
 # --- [NIEUW] GSE configuratie ---
 GSE_COUNT = 5
@@ -160,6 +162,27 @@ def create_graph(nodes_dict, edges_dict, plot_graph=True):
     return graph
 
 
+def assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t):
+    unassigned_planes = [
+        plane
+        for plane in active_planes
+        if plane.needs_service_assignment()
+        and (plane.id, plane.next_service_type) not in auctioned_tasks
+    ]
+
+    if not unassigned_planes:
+        return
+
+    assignments = auction_system.allocate_tasks(unassigned_planes, heuristics)
+    for gse, plane in assignments:
+        service_type = plane.next_service_type
+        if service_type is None:
+            continue
+        auctioned_tasks.add((plane.id, service_type))
+        plane.mark_service_assigned(service_type, gse.id)
+        gse.plan_service_task(plane, nodes_dict, heuristics, t, service_type=service_type)
+
+
 def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
     """
     Generate (gse_id, start_node) tuples for a randomly placed GSE fleet.
@@ -192,7 +215,9 @@ heuristics = calc_heuristics(graph, nodes_dict)
 plane_schedule = load_plane_schedule(
     plane_data_file,
     nodes_dict,
-    gate_turnaround_time,
+    unloading_duration_minutes,
+    loading_duration_minutes,
+    departure_delay_minutes,
     base_dir=BASE_DIR,
 )
 plane_schedule_lookup = build_plane_schedule_lookup(plane_schedule)
@@ -215,9 +240,9 @@ print(f"[Init] {len(gse_lst)} GSEs aangemaakt met spawn nodes: {gse_spawn_config
 fleet_manager  = Fleet_manager(nodes_dict)
 auction_system = AuctionSystem(gse_lst)
 
-# Bijhouden welke vliegtuigen al een GSE toegewezen hebben gekregen
-# zodat we niet bij elke tijdstap opnieuw een veiling houden voor hetzelfde vliegtuig.
-already_auctioned = set()
+# Bijhouden welke servicetaken al een GSE toegewezen hebben gekregen
+# zodat we niet bij elke tijdstap opnieuw een veiling houden voor dezelfde service.
+auctioned_tasks = set()
 
 if visualization:
     map_properties = map_initialization(nodes_dict, edges_dict)
@@ -251,25 +276,56 @@ while running:
     if new_planes:
         active_planes.extend(new_planes)
 
-    # Verwijder vliegtuigen waarvan de turnaround voorbij is EN waarvan de GSE is aangekomen.
-    # Een plane blijft zichtbaar totdat de toegewezen GSE status "working" heeft op die gate,
-    # zodat vliegtuigen niet verdwijnen voordat ze bediend zijn.
-    working_gate_nodes = {
-        gse.current_node
-        for gse in gse_lst
-        if gse.status == "working"
-    }
+    plane_by_id = {plane.id: plane for plane in active_planes}
+
+    # Rond services af waarvan de werktijd is verstreken.
+    for gse in gse_lst:
+        if gse.status == "working" and gse.work_end_time is not None and t >= gse.work_end_time - 1e-9:
+            plane = plane_by_id.get(gse.assigned_plane_id)
+            if plane is None:
+                raise ValueError(
+                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                )
+            if gse.assigned_service_type == "load":
+                plane.complete_current_service(t)
+                print(
+                    f"[Plane {plane.id}] t={t}: loading completed, departure possible at t={plane.departure_ready_time}"
+                )
+                gse.finish_working(nodes_dict, heuristics, t)
+            elif gse.assigned_service_type == "unload":
+                plane.complete_current_service(t)
+                plane.mark_unloading_departed(gse.id)
+                print(
+                    f"[Plane {plane.id}] t={t}: unloading completed at gate, "
+                    f"cargo en route to node {plane.cargo_to}; loading unlocks once GSE {gse.id} departs"
+                )
+                gse.plan_to_node(
+                    plane.cargo_to,
+                    nodes_dict,
+                    heuristics,
+                    t,
+                    stage="unload_to_cargo",
+                    label=f"cargo node {plane.cargo_to} with cargo from plane {plane.id}",
+                )
+            else:
+                raise ValueError(
+                    f"GSE {gse.id} has unknown service type '{gse.assigned_service_type}'."
+                )
+
+    # Vliegtuig vertrekt pas na completed loading + 5 minuten.
     despawned_ids = {
         plane.id
         for plane in active_planes
-        if plane.ready_to_despawn(t, working_gate_nodes)
+        if plane.ready_to_despawn(t)
     }
     if despawned_ids:
         for plane in active_planes:
             if plane.id in despawned_ids:
-                plane.status = "departed"
-                already_auctioned.discard(plane.id)
+                plane.mark_departed(t)
+                auctioned_tasks.discard((plane.id, "unload"))
+                auctioned_tasks.discard((plane.id, "load"))
         active_planes = [plane for plane in active_planes if plane.id not in despawned_ids]
+        plane_by_id = {plane.id: plane for plane in active_planes}
 
     # -------------------------------------------------------------------------
     # [NIEUW] Fleet Manager: update gate-bezettingskaart
@@ -277,20 +333,16 @@ while running:
     fleet_manager.update_gate_status(active_planes, aircraft_lst=gse_lst, t=t)
 
     # -------------------------------------------------------------------------
-    # [NIEUW] Auction: wijs GSEs toe aan gates die nog niet bediend worden
+    # [NIEUW] Auction: wijs GSEs toe aan unload/load taken
     # -------------------------------------------------------------------------
-    unassigned_planes = [
-        plane
-        for plane in active_planes
-        if not plane.serviced and plane.id not in already_auctioned
-    ]
-
-    if unassigned_planes:
-        assignments = auction_system.allocate_tasks(unassigned_planes, heuristics)
-        for gse, plane in assignments:
-            already_auctioned.add(plane.id)
-            plane.serviced = True
-            gse.plan_to_gate(plane.node_id, nodes_dict, heuristics, t)
+    assign_service_tasks(
+        active_planes,
+        auctioned_tasks,
+        auction_system,
+        heuristics,
+        nodes_dict,
+        t,
+    )
 
     # -------------------------------------------------------------------------
     # [NIEUW] GSEs die 'needs_charging' zijn sturen naar het depot
@@ -337,6 +389,74 @@ while running:
         if gse.status == "arrived" and gse.current_node == DEPOT_NODE:
             gse.status = "charging"
 
+    # Zodra de unload-GSE het plane node heeft verlaten, mag loading worden toegewezen.
+    gse_by_id = {gse.id: gse for gse in gse_lst}
+    for plane in active_planes:
+        if plane.status != "awaiting_load_release" or plane.load_release_gse_id is None:
+            continue
+        unloading_gse = gse_by_id.get(plane.load_release_gse_id)
+        if unloading_gse is None:
+            raise ValueError(
+                f"Unload-release GSE {plane.load_release_gse_id} for plane {plane.id} not found."
+            )
+        if unloading_gse.position != plane.xy_pos:
+            plane.release_for_loading()
+            print(
+                f"[Plane {plane.id}] t={t}: unloading GSE left gate, loading can now be assigned"
+            )
+
+    assign_service_tasks(
+        active_planes,
+        auctioned_tasks,
+        auction_system,
+        heuristics,
+        nodes_dict,
+        t,
+    )
+
+    # Start nieuw gearriveerde unload/load services.
+    plane_by_id = {plane.id: plane for plane in active_planes}
+    for gse in gse_lst:
+        if gse.status == "at_cargo_pickup":
+            plane = plane_by_id.get(gse.assigned_plane_id)
+            if plane is None:
+                raise ValueError(
+                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                )
+            gse.plan_to_node(
+                plane.node_id,
+                nodes_dict,
+                heuristics,
+                t,
+                stage="load_to_plane",
+                label=f"plane {plane.id} with cargo from node {plane.cargo_from}",
+            )
+            print(
+                f"[Plane {plane.id}] t={t}: cargo picked up at node {plane.cargo_from}, "
+                f"en route to gate {plane.node_id}"
+            )
+        elif gse.status == "at_cargo_dropoff":
+            plane = plane_by_id.get(gse.assigned_plane_id)
+            if plane is None:
+                raise ValueError(
+                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                )
+            print(
+                f"[Plane {plane.id}] t={t}: unloaded cargo delivered to node {plane.cargo_to}"
+            )
+            gse.finish_working(nodes_dict, heuristics, t)
+        elif gse.status == "working" and gse.work_end_time is None:
+            plane = plane_by_id.get(gse.assigned_plane_id)
+            if plane is None:
+                raise ValueError(
+                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                )
+            gse.work_end_time = plane.start_service(gse.assigned_service_type, gse.id, t)
+            print(
+                f"[Plane {plane.id}] t={t}: {gse.assigned_service_type} started by GSE {gse.id}, "
+                f"completes at t={gse.work_end_time}"
+            )
+
     t = t + dt
     step_count += 1
 
@@ -351,3 +471,20 @@ while running:
 print("\n--- Eindrapport GSEs ---")
 for gse in gse_lst:
     print(gse)
+
+print("\n--- Turnaround Times Planes ---")
+total_turnaround_time = 0.0
+completed_turnaround_count = 0
+for plane in plane_schedule:
+    turnaround_time = plane.turnaround_time
+    if turnaround_time is None:
+        print(f"Plane {plane.id}: turnaround incomplete (status={plane.status})")
+        continue
+    total_turnaround_time += turnaround_time
+    completed_turnaround_count += 1
+    print(f"Plane {plane.id}: turnaround time = {turnaround_time:.1f} minutes")
+
+print(
+    f"Totaal turnaround time ({completed_turnaround_count} voltooide planes): "
+    f"{total_turnaround_time:.1f} minutes"
+)

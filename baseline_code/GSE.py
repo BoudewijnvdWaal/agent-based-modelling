@@ -41,9 +41,13 @@ class GSE(object):
         #   "working"        – bezig bij de gate (vliegtuig wordt bediend)
         #   "charging"       – aan het opladen in het depot
         #   "needs_charging" – accu kritiek laag, moet naar depot
+        #   "at_cargo_pickup" / "at_cargo_dropoff" – tussenstappen in cargomissie
         self.status               = "available"
         self.goal                 = None    # huidig doelnode
-        self.assigned_gate_plane_id = None  # node_id van toegewezen gate
+        self.assigned_plane_id    = None
+        self.assigned_service_type = None
+        self.work_end_time        = None
+        self.task_stage           = None
 
         # --- Batterij ---
         self.soc              = 100.0   # State of Charge in %
@@ -90,10 +94,14 @@ class GSE(object):
         Plant een pad terug naar het depot om op te laden.
         Roep aan wanneer status == 'needs_charging'.
         """
-        self.goal   = self.depot_node
-        self.start  = self.current_node
-        self.status = "taxiing"
-        self._plan_path(nodes_dict, heuristics, t, label="depot (charging)")
+        self.plan_to_node(
+            self.depot_node,
+            nodes_dict,
+            heuristics,
+            t,
+            stage="to_depot",
+            label="depot (charging)",
+        )
         # Na aankomst in depot zet move() status -> "arrived";
         # vervolgens dient de simulatieloop status -> "charging" te zetten.
 
@@ -101,7 +109,7 @@ class GSE(object):
     # Veiling (Auction)
     # -------------------------------------------------------------------------
 
-    def calculate_bid(self, gate_node_id, heuristics):
+    def calculate_bid(self, gate_node_id, heuristics, second_node_id=None):
         """
         Berekent een bod voor een taak bij gate_node_id.
         Lagere waarde = beter bod.
@@ -120,6 +128,10 @@ class GSE(object):
             return float('inf')
 
         distance = heuristics[self.current_node][gate_node_id]
+        if second_node_id is not None:
+            if second_node_id not in heuristics.get(gate_node_id, {}):
+                return float('inf')
+            distance += heuristics[gate_node_id][second_node_id]
 
         # Straf voor lage accu zodat vollere GSEs voorrang krijgen bij gelijke afstand
         battery_penalty = (100.0 - self.soc) * 0.2
@@ -155,7 +167,41 @@ class GSE(object):
         if path[0][1] != t:
             raise Exception(f"[GSE {self.id}] Tijdstip van pad klopt niet: verwacht {t}, kreeg {path[0][1]}")
 
-    def plan_to_gate(self, gate_node_id, nodes_dict, heuristics, t):
+    def plan_to_node(self, node_id, nodes_dict, heuristics, t, stage=None, label="goal"):
+        self.goal = node_id
+        self.start = self.current_node
+        self.status = "taxiing"
+        self.task_stage = stage
+        self.work_end_time = None
+        self._plan_path(nodes_dict, heuristics, t, label=label)
+
+    def plan_service_task(self, plane, nodes_dict, heuristics, t, service_type=None):
+        self.assigned_plane_id = plane.id
+        self.assigned_service_type = service_type or self.assigned_service_type or plane.next_service_type
+        if self.assigned_service_type == "load":
+            self.plan_to_node(
+                plane.cargo_from,
+                nodes_dict,
+                heuristics,
+                t,
+                stage="load_to_cargo",
+                label=f"cargo node {plane.cargo_from} for plane {plane.id}",
+            )
+        elif self.assigned_service_type == "unload":
+            self.plan_to_node(
+                plane.node_id,
+                nodes_dict,
+                heuristics,
+                t,
+                stage="unload_to_plane",
+                label=f"plane {plane.id} for unloading",
+            )
+        else:
+            raise ValueError(
+                f"Unknown service type '{self.assigned_service_type}' for plane {plane.id}."
+            )
+
+    def plan_to_gate(self, gate_node_id, nodes_dict, heuristics, t, plane_id=None, service_type=None):
         """
         Plant een pad van de huidige positie naar de opgegeven gate.
         Wordt aangeroepen nadat de auction deze GSE een taak heeft toegewezen.
@@ -165,10 +211,16 @@ class GSE(object):
             - heuristics   : [dict]
             - t            : [float] huidig tijdstip
         """
-        self.goal   = gate_node_id
-        self.start  = self.current_node
-        self.status = "taxiing"
-        self._plan_path(nodes_dict, heuristics, t, label=f"gate {gate_node_id}")
+        self.assigned_plane_id = plane_id
+        self.assigned_service_type = service_type
+        self.plan_to_node(
+            gate_node_id,
+            nodes_dict,
+            heuristics,
+            t,
+            stage="service_to_plane",
+            label=f"gate {gate_node_id}",
+        )
 
     def plan_independent(self, nodes_dict, edges_dict, heuristics, t):
         """
@@ -259,14 +311,25 @@ class GSE(object):
         Callback bij aankomst op het doelknooppunt.
         Bepaalt de nieuwe status op basis van het doel.
         """
-        if self.goal == self.depot_node:
+        if self.task_stage == "to_depot":
             # Terug in depot: begin met opladen
             self.status = "charging"
+            self.work_end_time = None
+            self.assigned_plane_id = None
+            self.assigned_service_type = None
+            self.task_stage = None
             print(f"[GSE {self.id}] t={t}: depot bereikt, status -> charging (SoC={self.soc:.1f}%)")
+        elif self.task_stage == "load_to_cargo":
+            self.status = "at_cargo_pickup"
+            print(f"[GSE {self.id}] t={t}: cargo pickup bereikt voor plane {self.assigned_plane_id}")
+        elif self.task_stage == "unload_to_cargo":
+            self.status = "at_cargo_dropoff"
+            print(f"[GSE {self.id}] t={t}: cargo dropoff bereikt voor plane {self.assigned_plane_id}")
         else:
             # Gate bereikt: begin met werken aan het vliegtuig
             self.status = "working"
-            print(f"[GSE {self.id}] t={t}: gate {self.goal} bereikt, status -> working")
+            service_label = self.assigned_service_type or "service"
+            print(f"[GSE {self.id}] t={t}: gate {self.goal} bereikt, status -> working ({service_label})")
 
     # -------------------------------------------------------------------------
     # Hulpfuncties
@@ -277,7 +340,10 @@ class GSE(object):
         Roep aan wanneer het vliegtuig klaar is met beladen/tanken.
         De GSE gaat terug naar het depot of wordt direct beschikbaar gesteld.
         """
-        self.assigned_gate_plane_id = None
+        self.assigned_plane_id = None
+        self.assigned_service_type = None
+        self.work_end_time = None
+        self.task_stage = None
 
         if self.soc < self.low_soc_threshold:
             # Accu te laag: direct terug naar depot

@@ -14,7 +14,9 @@ class Plane:
         cargo_from,
         cargo_to,
         nodes_dict,
-        turnaround_time,
+        unloading_duration_minutes,
+        loading_duration_minutes,
+        departure_delay_minutes,
     ):
         gate_node_id = int(gate_node_id)
         if gate_node_id not in nodes_dict:
@@ -29,21 +31,127 @@ class Plane:
         self.spawn_time_minutes = float(spawn_time_minutes)
         self.cargo_from = int(cargo_from)
         self.cargo_to = int(cargo_to)
+        if self.cargo_from not in nodes_dict:
+            raise ValueError(
+                f"Cargo-from node {self.cargo_from} for plane {plane_id} not found in nodes_dict."
+            )
+        if self.cargo_to not in nodes_dict:
+            raise ValueError(
+                f"Cargo-to node {self.cargo_to} for plane {plane_id} not found in nodes_dict."
+            )
         self.xy_pos = nodes_dict[gate_node_id]["xy_pos"]
-        self.turnaround_time = float(turnaround_time)
-        self.despawn_time = self.spawn_time + self.turnaround_time
-        self.serviced = False
+        self.unloading_duration_minutes = float(unloading_duration_minutes)
+        self.loading_duration_minutes = float(loading_duration_minutes)
+        self.departure_delay_minutes = float(departure_delay_minutes)
+        self.current_service_type = None
+        self.current_service_end_time = None
+        self.current_service_gse_id = None
+        self.assigned_gse_id = None
+        self.unloading_complete_time = None
+        self.loading_complete_time = None
+        self.departure_ready_time = None
+        self.departed_time = None
+        self.load_release_gse_id = None
         self.status = "scheduled"
 
     def spawn(self):
-        self.status = "parked"
+        self.status = "awaiting_unload"
         return self
 
-    def ready_to_despawn(self, t, working_gate_nodes):
+    @property
+    def next_service_type(self):
+        if self.status == "awaiting_unload":
+            return "unload"
+        if self.status == "awaiting_load":
+            return "load"
+        return None
+
+    def needs_service_assignment(self):
+        return self.next_service_type is not None
+
+    def mark_service_assigned(self, service_type, gse_id):
+        if service_type == "unload" and self.status == "awaiting_unload":
+            self.status = "unload_assigned"
+        elif service_type == "load" and self.status == "awaiting_load":
+            self.status = "load_assigned"
+        else:
+            raise ValueError(
+                f"Plane {self.id} cannot assign service '{service_type}' while in status '{self.status}'."
+            )
+        self.assigned_gse_id = gse_id
+
+    def start_service(self, service_type, gse_id, start_time):
+        if service_type == "unload":
+            expected_status = "unload_assigned"
+            active_status = "unloading"
+            duration = self.unloading_duration_minutes
+        elif service_type == "load":
+            expected_status = "load_assigned"
+            active_status = "loading"
+            duration = self.loading_duration_minutes
+        else:
+            raise ValueError(f"Unknown service type '{service_type}' for plane {self.id}.")
+
+        if self.status != expected_status:
+            raise ValueError(
+                f"Plane {self.id} cannot start service '{service_type}' while in status '{self.status}'."
+            )
+
+        self.status = active_status
+        self.current_service_type = service_type
+        self.current_service_gse_id = gse_id
+        self.current_service_end_time = float(start_time) + duration
+        return self.current_service_end_time
+
+    def complete_current_service(self, completion_time):
+        if self.current_service_type == "unload":
+            self.unloading_complete_time = float(completion_time)
+            self.status = "awaiting_load_release"
+        elif self.current_service_type == "load":
+            self.loading_complete_time = float(completion_time)
+            self.departure_ready_time = self.loading_complete_time + self.departure_delay_minutes
+            self.status = "ready_to_depart"
+        else:
+            raise ValueError(f"Plane {self.id} has no active service to complete.")
+
+        completed_service_type = self.current_service_type
+        self.current_service_type = None
+        self.current_service_end_time = None
+        self.current_service_gse_id = None
+        self.assigned_gse_id = None
+        return completed_service_type
+
+    def mark_unloading_departed(self, gse_id):
+        if self.status != "awaiting_load_release":
+            raise ValueError(
+                f"Plane {self.id} cannot wait for unloading departure while in status '{self.status}'."
+            )
+        self.load_release_gse_id = gse_id
+
+    def release_for_loading(self):
+        if self.status != "awaiting_load_release":
+            raise ValueError(
+                f"Plane {self.id} cannot release for loading while in status '{self.status}'."
+            )
+        self.status = "awaiting_load"
+        self.load_release_gse_id = None
+
+    def ready_to_despawn(self, t):
         return (
-            t >= self.despawn_time - 1e-9
-            and (not self.serviced or self.node_id in working_gate_nodes)
+            self.status == "ready_to_depart"
+            and self.departure_ready_time is not None
+            and t >= self.departure_ready_time - 1e-9
         )
+
+    def mark_departed(self, departure_time):
+        self.departed_time = float(departure_time)
+        self.status = "departed"
+
+    @property
+    def turnaround_time(self):
+        if self.departed_time is None:
+            return None
+        return self.departed_time - self.spawn_time
 
     def to_gate_state(self):
         return {
@@ -82,7 +190,14 @@ def _normalize_columns(columns):
     }
 
 
-def load_plane_schedule(plane_data_file, nodes_dict, turnaround_time, base_dir=None):
+def load_plane_schedule(
+    plane_data_file,
+    nodes_dict,
+    unloading_duration_minutes,
+    loading_duration_minutes,
+    departure_delay_minutes,
+    base_dir=None,
+):
     plane_data_path = _resolve_path(plane_data_file, base_dir=base_dir)
     df_planes = pd.read_excel(plane_data_path)
     df_planes = df_planes.rename(columns=_normalize_columns(df_planes.columns))
@@ -106,7 +221,9 @@ def load_plane_schedule(plane_data_file, nodes_dict, turnaround_time, base_dir=N
                 cargo_from=row["cargo_from"],
                 cargo_to=row["cargo_to"],
                 nodes_dict=nodes_dict,
-                turnaround_time=turnaround_time,
+                unloading_duration_minutes=unloading_duration_minutes,
+                loading_duration_minutes=loading_duration_minutes,
+                departure_delay_minutes=departure_delay_minutes,
             )
         )
 

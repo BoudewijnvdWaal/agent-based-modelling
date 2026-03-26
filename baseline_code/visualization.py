@@ -49,6 +49,9 @@ white = (255, 255, 255)
 lightblue = (173, 216, 230)
 
 #%% Functions
+def normalize_xy(coord):
+    return (float(coord[0]), float(coord[1]))
+
 def c2m_x(x_coord, min_x, reso_x, x_range, shift=0):  # function to convert x-coordinate location to pixel in screen
     return int((float(x_coord - min_x) / x_range) * reso_x + shift)
 
@@ -99,6 +102,13 @@ def map_initialization(nodes_dict, edges_dict, spawn_schedule=None):  # function
 
     map_properties = dict()  # create dict to return all properties
     map_properties['spawn_schedule'] = spawn_schedule or []  # [NIEUW] sla spawn schema op
+    map_properties['node_metadata_by_xy'] = {
+        normalize_xy(node_props["xy_pos"]): {
+            "id": node_id,
+            "type": str(node_props.get("type", "")).lower(),
+        }
+        for node_id, node_props in nodes_dict.items()
+    }
     map_get_range(nodes_dict, map_properties)  # get info about the screen range properties
 
     # Determine screen resolution. On Windows we can query user32; on macOS/Linux fall back to a fixed HD size.
@@ -354,16 +364,25 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
             plot_text(scr, id_string, blue, 14, reso, gate_plane["xy_pos"][0], gate_plane["xy_pos"][1], min_x, max_y, x_range, y_range, 0, 20)
 
     collision = False
-    seen_positions = {}
+    node_metadata_by_xy = map_properties.get('node_metadata_by_xy', {})
+    positions_to_states = {}
     for state in current_states.values():
-        position = state["xy_pos"]
-        other_ac_id = seen_positions.get(position)
-        if other_ac_id is not None:
-            collision = True
-            print("COLLISION - between", other_ac_id, "and", state["ac_id"], "at location", position, "time", time)
-            plot_text(scr, "COLLISION", purple, 16, reso, position[0], position[1] + 0.1, min_x, max_y, x_range, y_range, 0, 25)
-        else:
-            seen_positions[position] = state["ac_id"]
+        position = normalize_xy(state["xy_pos"])
+        positions_to_states.setdefault(position, []).append(state)
+
+    for position, states_at_position in positions_to_states.items():
+        if len(states_at_position) <= 1:
+            continue
+
+        node_metadata = node_metadata_by_xy.get(position)
+        node_type = None if node_metadata is None else node_metadata.get("type")
+        if node_type in {"cargo", "charging"} and len(states_at_position) < 5:
+            continue
+
+        collision = True
+        ac_ids = [state["ac_id"] for state in states_at_position]
+        print("COLLISION - between", ", ".join(str(ac_id) for ac_id in ac_ids), "at location", position, "time", time)
+        plot_text(scr, "COLLISION", purple, 16, reso, position[0], position[1] + 0.1, min_x, max_y, x_range, y_range, 0, 25)
    
     pg.display.flip()  # Update the full display Surface to the screen
     pg.event.pump()  # internally process pygame event handlers

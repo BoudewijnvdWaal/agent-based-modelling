@@ -22,13 +22,21 @@ class AuctionSystem:
         for task in unassigned_tasks:
             task_node_id = getattr(task, "node_id", task)
             task_id = getattr(task, "id", task_node_id)
+            task_type = getattr(task, "next_service_type", None)
+            second_node_id = None
+            if task_type == "load":
+                task_node_id = task.cargo_from
+                second_node_id = task.node_id
+            elif task_type == "unload":
+                task_node_id = task.node_id
+                second_node_id = task.cargo_to
             best_bid = float('inf')
             winner = None
             
             # Vraag elke beschikbare GSE om een bod
             for gse in self.gse_list:
                 if gse.status == "available":
-                    bid = gse.calculate_bid(task_node_id, heuristics)
+                    bid = gse.calculate_bid(task_node_id, heuristics, second_node_id=second_node_id)
                     
                     if bid < best_bid:
                         best_bid = bid
@@ -39,7 +47,9 @@ class AuctionSystem:
                 assignments.append((winner, task))
                 # Zet de status van de winnaar op taxiing zodat hij niet op de volgende taak biedt in deze ronde
                 winner.status = "taxiing"
-                winner.assigned_gate_plane_id = task_id
-                print(f"[Auction] Taak bij gate {task_node_id} toegewezen aan GSE {winner.id} met bod {best_bid:.2f}")
+                winner.assigned_plane_id = task_id
+                winner.assigned_service_type = task_type
+                service_label = f" ({task_type})" if task_type else ""
+                print(f"[Auction] Taak bij gate {task_node_id}{service_label} toegewezen aan GSE {winner.id} met bod {best_bid:.2f}")
         
         return assignments
