@@ -15,16 +15,19 @@ def calc_heuristics(graph, nodes_dict):
     RETURNS:
         - heuristics = dict with shortest path distance between nodes. Dictionary in a dictionary. Key of first dict is fromnode and key in second dict is tonode.
     """
-    
+    node_ids = [nodes_dict[i]["id"] for i in nodes_dict]
     heuristics = {}
-    for i in nodes_dict:
-        heuristics[nodes_dict[i]["id"]] = {}
-        for j in nodes_dict:
-            path, path_length = heuristicFinder(graph, nodes_dict[i]["id"], nodes_dict[j]["id"])
-            if path == False:
-                pass
-            else:
-                heuristics[nodes_dict[i]["id"]][nodes_dict[j]["id"]] = path_length
+    for node_id in node_ids:
+        lengths = nx.single_source_dijkstra_path_length(graph, node_id, weight="weight")
+        if len(lengths) != len(node_ids):
+            missing = sorted(set(node_ids) - set(lengths))
+            raise Exception(
+                "Heuristic cannot be calculated: No connection between "
+                + str(node_id)
+                + " and "
+                + ", ".join(str(node) for node in missing)
+            )
+        heuristics[node_id] = dict(lengths)
     return heuristics
 
 def heuristicFinder(graph, start_node, goal_node):
@@ -56,7 +59,7 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
         - from_node = [int] node_id of node from which planning is done
         - goal_node = [int] node_id of node to which planning is done
         - heuristics = [dict] dict with shortest path distance between nodes. Dictionary in a dictionary. Key of first dict is fromnode and key in second dict is tonode.
-        - time_start = [float] planning start time. 
+        - time_start = [float] planning start time.
         - Hint: do you need more inputs?
     RETURNS:
         - success = True/False. True if path is found and False is no path is found
@@ -67,6 +70,9 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
     goal_node_id = goal_node
     time_start = time_start
     
+    if from_node_id == goal_node_id:
+        return True, [(from_node_id, time_start)]
+
     open_list = []
     closed_list = dict()
     earliest_goal_timestep = time_start
@@ -81,10 +87,10 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
         
         for neighbor in nodes_dict[curr['loc']]["neighbors"]:
             child = {'loc': neighbor,
-                    'g_val': curr['g_val'] + 0.5,
+                    'g_val': curr['g_val'] + 1.0,
                     'h_val': heuristics[neighbor][goal_node_id],
                     'parent': curr,
-                    'timestep': curr['timestep'] + 0.5}
+                    'timestep': curr['timestep'] + 1.0}
             if (child['loc'], child['timestep']) in closed_list:
                 existing_node = closed_list[(child['loc'], child['timestep'])]
                 if compare_nodes(child, existing_node):

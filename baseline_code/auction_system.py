@@ -11,15 +11,17 @@ class AuctionSystem:
         """
         Verdeelt taken onder de GSE's op basis van hun biedingen.
         INPUT:
-            - unassigned_tasks: Lijst met gate_node_ids die service nodig hebben
+            - unassigned_tasks: Lijst met plane-objecten of gate_node_ids die service nodig hebben
             - heuristics: De voorgecalculeerde afstanden tussen alle nodes
         RETURNS:
-            - assignments: Een lijst met tuples (gse_agent, task_id)
+            - assignments: Een lijst met tuples (gse_agent, task)
         """
         assignments = []
         
         # We veilen elke taak één voor één (Sequential Single-Item Auction)
-        for task_node_id in unassigned_tasks:
+        for task in unassigned_tasks:
+            task_node_id = getattr(task, "node_id", task)
+            task_id = getattr(task, "id", task_node_id)
             best_bid = float('inf')
             winner = None
             
@@ -34,10 +36,10 @@ class AuctionSystem:
             
             # Als we een winnaar hebben, wijs de taak toe
             if winner:
-                assignments.append((winner, task_node_id))
+                assignments.append((winner, task))
                 # Zet de status van de winnaar op taxiing zodat hij niet op de volgende taak biedt in deze ronde
                 winner.status = "taxiing"
-                winner.assigned_gate_plane_id = task_node_id
+                winner.assigned_gate_plane_id = task_id
                 print(f"[Auction] Taak bij gate {task_node_id} toegewezen aan GSE {winner.id} met bod {best_bid:.2f}")
         
         return assignments

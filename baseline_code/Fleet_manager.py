@@ -6,10 +6,20 @@ class Fleet_manager:
         # Binary occupancy: 1 = occupied, 0 = free
         self.gate_status = {gid: 0 for gid in self.gate_ids}
 
+    def _plane_gate_id(self, plane):
+        if isinstance(plane, dict):
+            return plane.get("node_id")
+        return getattr(plane, "node_id", None)
+
+    def _plane_id(self, plane):
+        if isinstance(plane, dict):
+            return plane.get("id")
+        return getattr(plane, "id", None)
+
     def update_gate_status(self, gate_planes, aircraft_lst=None, t=None):
         """
         Update the binary occupancy map.
-        gate_planes: list of dicts with key 'node_id' for parked planes.
+        gate_planes: list of parked plane objects or dicts with key 'node_id'.
         aircraft_lst: optional list of GSE instances; gates where a/c have status 'arrived' are marked occupied too.
         t: optional current simulation time (for logging)
         """
@@ -17,12 +27,12 @@ class Fleet_manager:
         status = {gid: 0 for gid in self.gate_ids}  # start with all free
         # mark static gate planes
         for gp in gate_planes:
-            gid = gp.get("node_id")
+            gid = self._plane_gate_id(gp)
             if gid in status:
                 status[gid] = 1
                 if prev_status.get(gid, 0) == 0:
                     status_list = [status[g] for g in self.gate_ids]
-                    print(f"[FleetManager] t={t}: gate {gid} occupied by parked plane id={gp.get('id')} | status={status_list}")
+                    print(f"[FleetManager] t={t}: gate {gid} occupied by parked plane id={self._plane_id(gp)} | status={status_list}")
         # mark arrived aircraft parked at a gate
         if aircraft_lst:
             for ac in aircraft_lst:

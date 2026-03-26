@@ -2,7 +2,8 @@
 Run-me.py is the main file of the simulation. Run this file to run the simulation.
 """
 
-import os
+from pathlib import Path
+import random
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -11,49 +12,36 @@ import pygame as pg
 from single_agent_planner import calc_heuristics
 from visualization import map_initialization, map_running
 from GSE import GSE
+from Plane import load_plane_schedule, build_plane_schedule_lookup, spawn_planes
 from Fleet_manager import Fleet_manager
 from auction_system import AuctionSystem
+
+BASE_DIR = Path(__file__).resolve().parent
 
 # =============================================================================
 # SIMULATION PARAMETERS  (pas hier aan)
 # =============================================================================
 nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
+plane_data_file = "Data/Plane_data.xlsx"
 
-simulation_time = 1000
+simulation_duration_hours = 12
+simulation_time = simulation_duration_hours * 60  # 12 pseudo-hours = 720 simulated minutes
 planner = "Independent"
-
-# Vliegtuigen rijden NIET meer over de taxibaan — ze spawnen direct bij een gate
-# als statisch gate_plane object. GSEs zijn de enige bewegende agents.
-# Laat deze lijst leeg, of verwijder hem helemaal.
-spawn_schedule = []
-
-# Statische vliegtuigen bij gates: (spawn_time, gate_node_id)
-gate_plane_schedule = [
-    (0.5, 7),
-    (2.0, 9),
-    (4.0, 14),
-    (6.0, 17),
-]
 
 # Hoe lang een vliegtuig aan de gate staat (zelfde tijdseenheid als t)
 gate_turnaround_time = 3.0
 
 # --- [NIEUW] GSE configuratie ---
-# Elke tuple: (gse_id, start_node)
-# start_node moet een 'charging'-type node zijn (= depot).
-# Pas de node-ids aan zodra je weet welke nodes 'charging' zijn in jouw layout.
-GSE_SPAWN_CONFIG = [
-    (1, 2),   # GSE 1 start op node 2
-    (2, 2),   # GSE 2 start op node 2
-    (3, 2),   # GSE 3 start op node 2
-]
+GSE_COUNT = 5
+GSE_RANDOM_SEED = None
 DEPOT_NODE = 2   # node_id van het laadstation/depot; pas aan naar jouw layout
 
 # Visualisatie
 plot_graph         = False
 visualization      = True
-visualization_speed = 0.1
+step_duration_seconds = 0.25
+render_every_n_steps = 1
 
 
 # =============================================================================
@@ -76,8 +64,26 @@ def import_layout(nodes_file, edges_file):
     cargoep_xy    = []
     chargingrr_xy = []
 
-    df_nodes = pd.read_excel(os.getcwd() + "/" + nodes_file)
-    df_edges = pd.read_excel(os.getcwd() + "/" + edges_file)
+    def resolve_path(path_like):
+        path = Path(path_like).expanduser()
+        candidates = [path]
+        if not path.is_absolute():
+            candidates.append(BASE_DIR / path)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        raise FileNotFoundError(
+            f"Could not find layout file '{path_like}'. "
+            f"Tried: {', '.join(str(candidate) for candidate in candidates)}"
+        )
+
+    nodes_path = resolve_path(nodes_file)
+    edges_path = resolve_path(edges_file)
+
+    df_nodes = pd.read_excel(nodes_path)
+    df_edges = pd.read_excel(edges_path)
 
     nodes_dict = {}
     for i, row in df_nodes.iterrows():
@@ -154,30 +160,26 @@ def create_graph(nodes_dict, edges_dict, plot_graph=True):
     return graph
 
 
-def spawn_gate_planes(t, nodes_dict, schedule, turnaround_time, next_id_ref):
+def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
     """
-    Create static gate planes whose spawn time matches the current timestep.
-    Each plane remains visible until spawn_time + turnaround_time.
+    Generate (gse_id, start_node) tuples for a randomly placed GSE fleet.
+    GSEs spawn on non-gate nodes to avoid occupying aircraft gates at t=0.
     """
-    new_gate_planes = []
-    for spawn_time, gate_node_id in schedule:
-        if abs(spawn_time - t) < 1e-9:
-            if gate_node_id not in nodes_dict:
-                raise ValueError(
-                    f"Gate node {gate_node_id} not found in nodes_dict; "
-                    "update gate_plane_schedule."
-                )
-            position = nodes_dict[gate_node_id]["xy_pos"]
-            new_gate_planes.append({
-                "id":          next_id_ref[0],
-                "node_id":     gate_node_id,
-                "xy_pos":      position,
-                "despawn_time": spawn_time + turnaround_time,
-                "serviced":    False   # [NIEUW] bijhouden of er al een GSE is toegewezen
-            })
-            next_id_ref[0] += 1
-    return new_gate_planes
+    candidate_nodes = [
+        node_id
+        for node_id, node_props in nodes_dict.items()
+        if node_props.get("type") != "gate"
+    ]
+    if not candidate_nodes:
+        raise ValueError("No non-gate nodes available for random GSE spawning.")
 
+    rng = random.Random(seed)
+    if gse_count <= len(candidate_nodes):
+        spawn_nodes = rng.sample(candidate_nodes, gse_count)
+    else:
+        spawn_nodes = [rng.choice(candidate_nodes) for _ in range(gse_count)]
+
+    return [(gse_id, start_node) for gse_id, start_node in enumerate(spawn_nodes, start=1)]
 
 # =============================================================================
 # INITIALISATIE
@@ -186,24 +188,35 @@ nodes_dict, edges_dict, start_and_goal_locations = import_layout(nodes_file, edg
 graph      = create_graph(nodes_dict, edges_dict, plot_graph)
 heuristics = calc_heuristics(graph, nodes_dict)
 
-# --- Statische gate-vliegtuigen ---
-gate_planes        = []
-gate_plane_next_id = [1]
+# --- Geplande vliegtuigen uit Plane_data.xlsx ---
+plane_schedule = load_plane_schedule(
+    plane_data_file,
+    nodes_dict,
+    gate_turnaround_time,
+    base_dir=BASE_DIR,
+)
+plane_schedule_lookup = build_plane_schedule_lookup(plane_schedule)
+active_planes = []
+gse_spawn_config = build_random_gse_spawn_config(
+    nodes_dict,
+    GSE_COUNT,
+    seed=GSE_RANDOM_SEED,
+)
 
 # --- [NIEUW] Maak GSE-vloot aan ---
 gse_lst = []
-for gse_id, start_node in GSE_SPAWN_CONFIG:
+for gse_id, start_node in gse_spawn_config:
     gse = GSE(gse_id=gse_id, start_node=start_node,
               nodes_dict=nodes_dict, depot_node=DEPOT_NODE)
     gse_lst.append(gse)
-print(f"[Init] {len(gse_lst)} GSEs aangemaakt: {gse_lst}")
+print(f"[Init] {len(gse_lst)} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
 
 # --- [NIEUW] Fleet Manager en Auction System ---
 fleet_manager  = Fleet_manager(nodes_dict)
 auction_system = AuctionSystem(gse_lst)
 
-# Bijhouden welke gate_plane node_ids al een GSE toegewezen hebben gekregen
-# zodat we niet bij elke tijdstap opnieuw een veiling houden voor dezelfde gate.
+# Bijhouden welke vliegtuigen al een GSE toegewezen hebben gekregen
+# zodat we niet bij elke tijdstap opnieuw een veiling houden voor hetzelfde vliegtuig.
 already_auctioned = set()
 
 if visualization:
@@ -216,8 +229,9 @@ if visualization:
 running       = True
 escape_pressed = False
 time_end      = simulation_time
-dt            = 0.1   # moet een factor van 0.5 zijn
+dt            = 1.0   # 1 simulatiestap = 1 pseudo-minuut
 t             = 0
+step_count    = 0
 
 print("Simulation Started")
 while running:
@@ -231,84 +245,80 @@ while running:
         break
 
     # -------------------------------------------------------------------------
-    # Spawn / verwijder statische gate-vliegtuigen
+    # Spawn / verwijder geplande vliegtuigen uit Plane_data.xlsx
     # -------------------------------------------------------------------------
-    new_gate_planes = spawn_gate_planes(
-        t, nodes_dict, gate_plane_schedule, gate_turnaround_time, gate_plane_next_id
-    )
-    if new_gate_planes:
-        gate_planes.extend(new_gate_planes)
+    new_planes = spawn_planes(t, plane_schedule_lookup)
+    if new_planes:
+        active_planes.extend(new_planes)
 
     # Verwijder vliegtuigen waarvan de turnaround voorbij is EN waarvan de GSE is aangekomen.
-    # Een gate-plane blijft zichtbaar totdat de toegewezen GSE status "working" heeft op die gate,
+    # Een plane blijft zichtbaar totdat de toegewezen GSE status "working" heeft op die gate,
     # zodat vliegtuigen niet verdwijnen voordat ze bediend zijn.
-    def gse_has_arrived(gate_node_id):
-        """Geeft True als een GSE op deze gate staat met status 'working'."""
-        return any(
-            gse.status == "working" and gse.current_node == gate_node_id
-            for gse in gse_lst
-        )
-
-    despawned = [
-        gp for gp in gate_planes
-        if t >= gp["despawn_time"] - 1e-9 and (not gp["serviced"] or gse_has_arrived(gp["node_id"]))
-    ]
-    for gp in despawned:
-        already_auctioned.discard(gp["node_id"])
-    gate_planes = [gp for gp in gate_planes if gp not in despawned]
+    working_gate_nodes = {
+        gse.current_node
+        for gse in gse_lst
+        if gse.status == "working"
+    }
+    despawned_ids = {
+        plane.id
+        for plane in active_planes
+        if plane.ready_to_despawn(t, working_gate_nodes)
+    }
+    if despawned_ids:
+        for plane in active_planes:
+            if plane.id in despawned_ids:
+                plane.status = "departed"
+                already_auctioned.discard(plane.id)
+        active_planes = [plane for plane in active_planes if plane.id not in despawned_ids]
 
     # -------------------------------------------------------------------------
     # [NIEUW] Fleet Manager: update gate-bezettingskaart
     # -------------------------------------------------------------------------
-    fleet_manager.update_gate_status(gate_planes, aircraft_lst=gse_lst, t=t)
+    fleet_manager.update_gate_status(active_planes, aircraft_lst=gse_lst, t=t)
 
     # -------------------------------------------------------------------------
     # [NIEUW] Auction: wijs GSEs toe aan gates die nog niet bediend worden
     # -------------------------------------------------------------------------
-    unassigned_tasks = [
-        gp["node_id"]
-        for gp in gate_planes
-        if not gp["serviced"] and gp["node_id"] not in already_auctioned
+    unassigned_planes = [
+        plane
+        for plane in active_planes
+        if not plane.serviced and plane.id not in already_auctioned
     ]
 
-    if unassigned_tasks:
-        assignments = auction_system.allocate_tasks(unassigned_tasks, heuristics)
-        for gse, gate_node_id in assignments:
-            already_auctioned.add(gate_node_id)
-            # Markeer het gate-vliegtuig als bediend
-            for gp in gate_planes:
-                if gp["node_id"] == gate_node_id:
-                    gp["serviced"] = True
-            # Plan het pad van de winnende GSE naar de gate
-            gse.plan_to_gate(gate_node_id, nodes_dict, heuristics, t)
+    if unassigned_planes:
+        assignments = auction_system.allocate_tasks(unassigned_planes, heuristics)
+        for gse, plane in assignments:
+            already_auctioned.add(plane.id)
+            plane.serviced = True
+            gse.plan_to_gate(plane.node_id, nodes_dict, heuristics, t)
 
     # -------------------------------------------------------------------------
     # [NIEUW] GSEs die 'needs_charging' zijn sturen naar het depot
     # -------------------------------------------------------------------------
     for gse in gse_lst:
         if gse.status == "needs_charging":
-            gse.go_charge(nodes_dict, edges_dict, heuristics, t)
+            gse.go_charge(nodes_dict, heuristics, t)
 
     # -------------------------------------------------------------------------
     # Visualisatie
     # -------------------------------------------------------------------------
-    if visualization:
-        # Alleen GSEs worden gevisualiseerd als bewegende agents
+    if visualization and step_count % render_every_n_steps == 0:
+        # Toon alle GSEs, ook wanneer ze stilstaan op hun spawnlocatie.
         current_states = {}
         for gse in gse_lst:
-            if gse.status == "taxiing":
-                current_states[gse.id] = {
-                    "ac_id":   f"GSE {gse.id}",
-                    "xy_pos":  gse.position,
-                    "heading": gse.heading
-                }
+            current_states[gse.id] = {
+                "ac_id":   f"GSE {gse.id}",
+                "xy_pos":  gse.position,
+                "heading": gse.heading
+            }
 
         gate_states = {
-            gp["id"]: {"id": gp["id"], "node_id": gp["node_id"], "xy_pos": gp["xy_pos"]}
-            for gp in gate_planes
+            plane.id: plane.to_gate_state()
+            for plane in active_planes
         }
         escape_pressed = map_running(map_properties, current_states, gate_states, t)
-        timer.sleep(visualization_speed)
+    if step_duration_seconds > 0:
+        timer.sleep(step_duration_seconds)
 
     # -------------------------------------------------------------------------
     # [NIEUW] Beweeg GSEs + update SoC
@@ -328,6 +338,7 @@ while running:
             gse.status = "charging"
 
     t = t + dt
+    step_count += 1
 
 
 # =============================================================================

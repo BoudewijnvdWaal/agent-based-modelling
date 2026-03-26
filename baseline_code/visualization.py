@@ -8,9 +8,12 @@ import numpy as np
 import pygame as pg
 from math import *
 import os
+from pathlib import Path
 import ctypes
 import platform
 import time as timer
+
+BASE_DIR = Path(__file__).resolve().parent
 
 #%% Initialize values
 #User inputs (may be changed)
@@ -21,6 +24,7 @@ disp_time = True  # display current time
 disp_waypoint = True  # display dot of the waypoint
 disp_vehicles = True
 disp_runways = False  # draw the stylized green runway blocks
+font_cache = {}
 
 #Lines below are used in visualization, dont change them (line 26-46)
 piclist = []  # list to store all pics
@@ -80,7 +84,7 @@ def plot_circle(scr, color_code, reso, radius, coord_1, x0, y0, x_range, y_range
     pg.draw.circle(scr, color_code, (wp_map_x, wp_map_y), radius)  # draw a dot on the screen at found coodrinates
 
 def plot_text(scr, text_str, color_code, fontsize, reso, x, y, x0, y0, x_range, y_range, x_shift=0, y_shift=0):
-    font = pg.font.Font(None, fontsize)  # set the font + font size
+    font = font_cache.setdefault(fontsize, pg.font.Font(None, fontsize))
     text = font.render(text_str, 1,
                        color_code)  # draw text on surface, using found density string, 1 = smooth edges, 10-10-10 is black color
     textpos = text.get_rect()  # get rectangle of text string
@@ -117,8 +121,8 @@ def map_initialization(nodes_dict, edges_dict, spawn_schedule=None):  # function
     scr = pg.display.set_mode(outer_reso)
     scrrect = scr.get_rect()  # get rectangular area of the surface
     scr.fill(white)  # set background color
-    plane_pic_path = os.path.join(os.getcwd(), "Figures/Red_Car.png")
-    plane_pic = pg.image.load(plane_pic_path).convert_alpha()  # car sprite with transparency
+    plane_pic_path = BASE_DIR / "Figures" / "Red_Car.png"
+    plane_pic = pg.image.load(str(plane_pic_path)).convert_alpha()  # car sprite with transparency
     # Scale sprite to a consistent width (~32 px) to match the old plane icon size
     target_w = 32
     scale_factor = target_w / plane_pic.get_width()
@@ -128,8 +132,8 @@ def map_initialization(nodes_dict, edges_dict, spawn_schedule=None):  # function
         rectlist.append(piclist[i].get_rect())  # get rectangular surface of the pic
 
     # Static gate-plane sprite (non-rotating)
-    gate_plane_path = os.path.join(os.getcwd(), "Figures/blue-plane-hi.bmp")
-    gate_plane_pic = pg.image.load(gate_plane_path).convert_alpha()
+    gate_plane_path = BASE_DIR / "Figures" / "blue-plane-hi.bmp"
+    gate_plane_pic = pg.image.load(str(gate_plane_path)).convert_alpha()
     gate_target_w = 28
     gate_scale_factor = gate_target_w / gate_plane_pic.get_width()
     gate_plane_pic = pg.transform.rotozoom(gate_plane_pic, 0, gate_scale_factor)
@@ -220,8 +224,7 @@ def map_get_background(map_properties, nodes_dict, edges_dict):
     map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_range, 0, 0,
                    spawn_schedule=spawn_schedule)
 
-    background = pg.image.tostring(scr, "RGB")  # transform image to string (faster reading during simulation
-    map_properties['background'] = background  # store background
+    map_properties['background'] = scr.copy()
 
 
 def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_range, scr_x_shift, scr_y_shift, spawn_schedule=None): 
@@ -312,8 +315,7 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
     background = map_properties['background']  # get layout background
     time = t  # keep local copy for on-screen prints/collision logging
 
-    layout = pg.image.fromstring(background, scrrect.size, "RGB")  # transform background from string to image
-    scr.blit(layout, scrrect)  # print layout on screen
+    scr.blit(background, scrrect)  # print layout on screen
     
     #draw aircraft and aircraft id
     if disp_vehicles:
@@ -332,7 +334,7 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
             
     if disp_time:
       # Convert simulation time (units of 1 minute) to clock time HH:MM
-      sim_minutes = round(t)  # 1 sim unit = 1 minute
+      sim_minutes = int(t)
       hours = (sim_minutes // 60) % 24
       minutes = sim_minutes % 60
       clock_str = f"{hours:02d}:{minutes:02d}"
@@ -351,14 +353,17 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
             id_string = 'G: ' + str(gate_plane["id"])
             plot_text(scr, id_string, blue, 14, reso, gate_plane["xy_pos"][0], gate_plane["xy_pos"][1], min_x, max_y, x_range, y_range, 0, 20)
 
-    collision=False
-    for ac1 in current_states:
-        for ac2 in current_states:
-            if ac1 != ac2 and current_states[ac1]["xy_pos"] == current_states[ac2]["xy_pos"]:
-                collision=True
-                print("COLLISION - between", current_states[ac1]["ac_id"], "and", current_states[ac2]["ac_id"], "at location", current_states[ac1]["xy_pos"], "time", time)
-                plot_text(scr, "COLLISION", purple, 16, reso, current_states[ac1]["xy_pos"][0], current_states[ac1]["xy_pos"][1]+0.1, min_x, max_y, x_range, y_range, 0,
-                      25)
+    collision = False
+    seen_positions = {}
+    for state in current_states.values():
+        position = state["xy_pos"]
+        other_ac_id = seen_positions.get(position)
+        if other_ac_id is not None:
+            collision = True
+            print("COLLISION - between", other_ac_id, "and", state["ac_id"], "at location", position, "time", time)
+            plot_text(scr, "COLLISION", purple, 16, reso, position[0], position[1] + 0.1, min_x, max_y, x_range, y_range, 0, 25)
+        else:
+            seen_positions[position] = state["ac_id"]
    
     pg.display.flip()  # Update the full display Surface to the screen
     pg.event.pump()  # internally process pygame event handlers

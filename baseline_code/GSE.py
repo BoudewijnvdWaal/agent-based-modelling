@@ -140,6 +140,12 @@ class GSE(object):
         )
         if success:
             self.path_to_goal = path[1:]
+            if not self.path_to_goal:
+                self.from_to = [path[0][0], path[0][0]]
+                self.current_node = path[0][0]
+                self.position = self.nodes_dict[self.current_node]["xy_pos"]
+                self._on_goal_reached(t)
+                return
             next_node_id      = self.path_to_goal[0][0]
             self.from_to      = [path[0][0], next_node_id]
             print(f"[GSE {self.id}] Pad naar {label}: {path}")
