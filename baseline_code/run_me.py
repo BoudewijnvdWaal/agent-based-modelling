@@ -3,6 +3,7 @@ Run-me.py is the main file of the simulation. Run this file to run the simulatio
 """
 
 from pathlib import Path
+import math
 import random
 import pandas as pd
 import networkx as nx
@@ -38,11 +39,13 @@ departure_delay_minutes = 5
 GSE_COUNT = 5
 GSE_RANDOM_SEED = None
 DEPOT_NODE = 2   # node_id van het laadstation/depot; pas aan naar jouw layout
+GSE_SPEED = 4.0  # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
 
 # Visualisatie
 plot_graph         = False
 visualization      = True
-step_duration_seconds = 0.25
+real_minutes_per_pseudo_hour = 1.0  # 12 pseudo-hours -> 12 real minutes
+gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
 render_every_n_steps = 1
 
 
@@ -204,6 +207,35 @@ def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
 
     return [(gse_id, start_node) for gse_id, start_node in enumerate(spawn_nodes, start=1)]
 
+
+def render_simulation_frame(map_properties, gse_lst, active_planes, t):
+    """
+    Teken de huidige simulatiestatus op het scherm.
+    """
+    current_states = {}
+    for gse in gse_lst:
+        current_states[gse.id] = {
+            "ac_id":   f"GSE {gse.id}",
+            "xy_pos":  gse.position,
+            "heading": gse.heading
+        }
+
+    gate_states = {
+        plane.id: plane.to_gate_state()
+        for plane in active_planes
+    }
+    return map_running(map_properties, current_states, gate_states, t)
+
+
+def pace_simulation(sim_minutes, real_seconds_per_pseudo_minute, simulation_start_wall_time):
+    """
+    Houd de simulatie gelijk aan de gewenste wall-clock snelheid.
+    """
+    target_elapsed_seconds = sim_minutes * real_seconds_per_pseudo_minute
+    remaining_sleep = target_elapsed_seconds - (timer.perf_counter() - simulation_start_wall_time)
+    if remaining_sleep > 0:
+        timer.sleep(remaining_sleep)
+
 # =============================================================================
 # INITIALISATIE
 # =============================================================================
@@ -232,7 +264,7 @@ gse_spawn_config = build_random_gse_spawn_config(
 gse_lst = []
 for gse_id, start_node in gse_spawn_config:
     gse = GSE(gse_id=gse_id, start_node=start_node,
-              nodes_dict=nodes_dict, depot_node=DEPOT_NODE)
+              nodes_dict=nodes_dict, depot_node=DEPOT_NODE, speed=GSE_SPEED)
     gse_lst.append(gse)
 print(f"[Init] {len(gse_lst)} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
 
@@ -257,6 +289,8 @@ time_end      = simulation_time
 dt            = 1.0   # 1 simulatiestap = 1 pseudo-minuut
 t             = 0
 step_count    = 0
+real_seconds_per_pseudo_minute = real_minutes_per_pseudo_hour
+simulation_start_wall_time = timer.perf_counter()
 
 print("Simulation Started")
 while running:
@@ -351,34 +385,42 @@ while running:
         if gse.status == "needs_charging":
             gse.go_charge(nodes_dict, heuristics, t)
 
-    # -------------------------------------------------------------------------
-    # Visualisatie
-    # -------------------------------------------------------------------------
-    if visualization and step_count % render_every_n_steps == 0:
-        # Toon alle GSEs, ook wanneer ze stilstaan op hun spawnlocatie.
-        current_states = {}
+    should_render_step = visualization and step_count % render_every_n_steps == 0
+    if should_render_step:
+        escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
+
+    movement_substeps = 1
+    if should_render_step:
+        taxiing_gses = [gse for gse in gse_lst if gse.status == "taxiing"]
+        if taxiing_gses:
+            max_step_distance = max(gse.speed * dt for gse in taxiing_gses)
+            movement_substeps = max(1, math.ceil(max_step_distance / gse_visual_max_step_distance))
+
+    sub_dt = dt / movement_substeps
+    for substep_index in range(movement_substeps):
+        substep_time = round(t + (substep_index + 1) * sub_dt, 2)
+
         for gse in gse_lst:
-            current_states[gse.id] = {
-                "ac_id":   f"GSE {gse.id}",
-                "xy_pos":  gse.position,
-                "heading": gse.heading
-            }
+            if gse.status == "taxiing":
+                gse.move(sub_dt, substep_time)
+            gse.update_soc(sub_dt)
 
-        gate_states = {
-            plane.id: plane.to_gate_state()
-            for plane in active_planes
-        }
-        escape_pressed = map_running(map_properties, current_states, gate_states, t)
-    if step_duration_seconds > 0:
-        timer.sleep(step_duration_seconds)
+        if should_render_step:
+            escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, substep_time)
+            if escape_pressed:
+                break
+            pace_simulation(
+                substep_time,
+                real_seconds_per_pseudo_minute,
+                simulation_start_wall_time,
+            )
 
-    # -------------------------------------------------------------------------
-    # [NIEUW] Beweeg GSEs + update SoC
-    # -------------------------------------------------------------------------
-    for gse in gse_lst:
-        if gse.status == "taxiing":
-            gse.move(dt, t)
-        gse.update_soc(dt)
+    if not should_render_step:
+        pace_simulation(
+            t + dt,
+            real_seconds_per_pseudo_minute,
+            simulation_start_wall_time,
+        )
 
     # -------------------------------------------------------------------------
     # [NIEUW] GSEs die bij het depot zijn aangekomen: zet op 'charging'

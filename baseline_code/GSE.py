@@ -12,7 +12,7 @@ class GSE(object):
     # Initialisatie
     # -------------------------------------------------------------------------
 
-    def __init__(self, gse_id, start_node, nodes_dict, depot_node=None):
+    def __init__(self, gse_id, start_node, nodes_dict, depot_node=None, speed=1.0):
         """
         Initialisatie van een GSE object.
         INPUT:
@@ -25,9 +25,11 @@ class GSE(object):
 
         # --- Vaste parameters ---
         self.id          = gse_id
-        self.speed       = 1.0          # eenheden per tijdstap
         self.nodes_dict  = nodes_dict
         self.depot_node  = depot_node if depot_node is not None else start_node
+        self.base_speed  = 1.0          # referentiesnelheid voor batterijverbruik
+        self.base_consumption_rate = 0.5  # verbruik per tijdseenheid bij base_speed
+        self.speed       = self.base_speed
 
         # --- Startpositie ---
         self.start         = start_node
@@ -51,7 +53,7 @@ class GSE(object):
 
         # --- Batterij ---
         self.soc              = 100.0   # State of Charge in %
-        self.consumption_rate = 0.5    # verbruik per tijdseenheid tijdens rijden
+        self.consumption_rate = self.base_consumption_rate
         self.charging_rate    = 2.0    # oplaadsnelheid per tijdseenheid in depot
         self.low_soc_threshold   = 25.0  # onder deze waarde niet meer bieden
         self.critical_soc_threshold = 15.0  # onder deze waarde direct naar depot
@@ -61,6 +63,20 @@ class GSE(object):
         self.from_to      = [0, 0]
         self.heading      = 0
         self.last_node    = None
+
+        self.set_speed(speed)
+
+    def set_speed(self, speed):
+        """
+        Stel de rijsnelheid in en schaal het batterijverbruik mee zodat
+        verbruik per afgelegde afstand gelijk blijft.
+        """
+        if speed <= 0:
+            raise ValueError(f"GSE speed must be positive, got {speed}.")
+
+        self.speed = float(speed)
+        speed_ratio = self.speed / self.base_speed
+        self.consumption_rate = self.base_consumption_rate * speed_ratio
 
     # -------------------------------------------------------------------------
     # Batterijbeheer
@@ -265,52 +281,67 @@ class GSE(object):
             - dt : grootte van de tijdstap
             - t  : huidig tijdstip (voor logging)
         """
-        if not self.path_to_goal:
+        if not self.path_to_goal or dt <= 0:
             return
 
-        from_node = self.from_to[0]
-        to_node   = self.from_to[1]
-        xy_from   = self.nodes_dict[from_node]["xy_pos"]
-        xy_to     = self.nodes_dict[to_node]["xy_pos"]
+        remaining_travel = self.speed * dt
+        while remaining_travel > 1e-9 and self.path_to_goal:
+            from_node = self.from_to[0]
+            to_node   = self.from_to[1]
+            xy_to     = self.nodes_dict[to_node]["xy_pos"]
+            distance_to_target = math.dist(self.position, xy_to)
 
-        # Beweeg richting to_node
-        dx       = xy_to[0] - xy_from[0]
-        dy       = xy_to[1] - xy_from[1]
-        edge_len = math.sqrt(dx**2 + dy**2)
-        step_len = min(self.speed * dt, edge_len)  # niet voorbij to_node schieten
+            if distance_to_target <= 1e-9:
+                self.position = xy_to
+                self.current_node = to_node
+                if to_node == self.goal:
+                    self._on_goal_reached(t)
+                    return
+                self._advance_path_segment()
+                continue
 
-        if edge_len > 0:
-            posx = round(self.position[0] + (dx / edge_len) * step_len, 2)
-            posy = round(self.position[1] + (dy / edge_len) * step_len, 2)
-        else:
-            posx, posy = self.position
+            self.get_heading(self.position, xy_to)
+            step_len = min(remaining_travel, distance_to_target)
+            ratio    = step_len / distance_to_target
+            posx     = round(self.position[0] + (xy_to[0] - self.position[0]) * ratio, 2)
+            posy     = round(self.position[1] + (xy_to[1] - self.position[1]) * ratio, 2)
+            self.position = (posx, posy)
+            remaining_travel -= step_len
 
-        self.position = (posx, posy)
-        self.get_heading(xy_from, xy_to)
+            if step_len >= distance_to_target - 1e-9 or math.dist(self.position, xy_to) <= 1e-3:
+                self.position = xy_to
+                self.current_node = to_node
 
-        # Controleer of to_node bereikt is
-        remaining = math.dist(self.position, xy_to)
-        if remaining <= 1e-3:
-            self.position    = xy_to
-            self.current_node = to_node     # ← update current_node
+                if to_node == self.goal:
+                    self._on_goal_reached(t)
+                    return
 
-            # Eindbestemming bereikt
-            if to_node == self.goal:
-                self._on_goal_reached(t)
-                return
+                self._advance_path_segment()
+            else:
+                break
 
-            # Volgende stap in het pad
-            if len(self.path_to_goal) > 1:
-                self.path_to_goal = self.path_to_goal[1:]
-                new_next_id       = self.path_to_goal[0][0]
-                self.last_node    = self.from_to[0]
-                self.from_to      = [to_node, new_next_id]
+    def _advance_path_segment(self):
+        """
+        Schuif door naar het volgende edge-segment van het huidige pad.
+        """
+        if len(self.path_to_goal) <= 1:
+            self.path_to_goal = []
+            self.from_to = [self.current_node, self.current_node]
+            return
+
+        self.path_to_goal = self.path_to_goal[1:]
+        new_next_id       = self.path_to_goal[0][0]
+        self.last_node    = self.from_to[0]
+        self.from_to      = [self.current_node, new_next_id]
 
     def _on_goal_reached(self, t):
         """
         Callback bij aankomst op het doelknooppunt.
         Bepaalt de nieuwe status op basis van het doel.
         """
+        self.path_to_goal = []
+        self.from_to = [self.current_node, self.current_node]
+
         if self.task_stage == "to_depot":
             # Terug in depot: begin met opladen
             self.status = "charging"

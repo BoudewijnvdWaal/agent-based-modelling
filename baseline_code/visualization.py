@@ -355,12 +355,12 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
 
     if disp_aircaft_id:  # if the aircraft id has to be displayed
         for aircraft in current_states.keys():
-            id_string = 'ID: ' + str(current_states[aircraft]["ac_id"])  # create string with ID
+            id_string = str(current_states[aircraft]["ac_id"])
             col = red
             plot_text(scr, id_string, col, 14, reso, current_states[aircraft]["xy_pos"][0], current_states[aircraft]["xy_pos"][1], min_x, max_y, x_range, y_range, 0,
                       25)
         for gate_plane in gate_states.values():
-            id_string = 'G: ' + str(gate_plane["id"])
+            id_string = str(gate_plane["id"])
             plot_text(scr, id_string, blue, 14, reso, gate_plane["xy_pos"][0], gate_plane["xy_pos"][1], min_x, max_y, x_range, y_range, 0, 20)
 
     collision = False
