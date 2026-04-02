@@ -42,7 +42,7 @@ departure_delay_minutes = 5
 GSE_COUNT = 5
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
-GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
+GSE_ELECTRIC = True  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
                #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
 
 # Visualisatie
@@ -260,7 +260,6 @@ def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, g
 
     # --- Turnaround times ---
     completed = [(p.id, p.turnaround_time) for p in plane_schedule if p.turnaround_time is not None]
-    incomplete = [p.id for p in plane_schedule if p.turnaround_time is None]
     total_turnaround = sum(tt for _, tt in completed)
 
     # --- GSE utiliteit ---
@@ -279,26 +278,38 @@ def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, g
                  f"base_consumption={first_gse.base_consumption_rate}%/unit")
     lines.append("=" * 60)
 
-    lines.append("")
-    lines.append("TURNAROUND TIMES")
-    lines.append("-" * 40)
-    for plane_id, tt in sorted(completed):
-        lines.append(f"  {plane_id:<20} {tt:>7.1f} min")
-    for plane_id in sorted(incomplete):
-        lines.append(f"  {plane_id:<20}   incomplete")
-    lines.append("-" * 40)
-    lines.append(f"  {'Total (' + str(len(completed)) + ' planes)':<20} {total_turnaround:>7.1f} min")
-    if completed:
-        lines.append(f"  {'Average':<20} {total_turnaround / len(completed):>7.1f} min")
+    col = {"flight": 10, "tt": 12, "wu": 12, "wl": 11}
+    hdr = (f"  {'Flight':<{col['flight']}}  {'Turnaround':>{col['tt']}}"
+           f"  {'Wait unload':>{col['wu']}}  {'Wait load':>{col['wl']}}")
+    sep = "  " + "-" * (sum(col.values()) + 8)
 
     lines.append("")
-    lines.append("GSE UTILIZATION  (cumulative battery % consumed)")
-    lines.append("-" * 40)
+    lines.append("FLIGHT TIMES")
+    lines.append(hdr)
+    lines.append(sep)
+    for plane in sorted(plane_schedule, key=lambda p: p.id):
+        tt_str = f"{plane.turnaround_time:>10.1f} min" if plane.turnaround_time is not None else f"{'incomplete':>12}"
+        wu_str = (f"{(plane.unload_start_time - plane.spawn_time):>10.1f} min"
+                  if plane.unload_start_time is not None else f"{'incomplete':>12}")
+        wl_str = (f"{(plane.load_start_time - plane.unloading_complete_time):>9.1f} min"
+                  if plane.load_start_time is not None and plane.unloading_complete_time is not None
+                  else f"{'incomplete':>11}")
+        lines.append(f"  {plane.id:<{col['flight']}}  {tt_str}  {wu_str}  {wl_str}")
+    lines.append(sep)
+    lines.append(f"  {'Total (' + str(len(completed)) + ' completed)':<{col['flight']}}  "
+                 f"{total_turnaround:>10.1f} min")
+    if completed:
+        lines.append(f"  {'Average':<{col['flight']}}  "
+                     f"{total_turnaround / len(completed):>10.1f} min")
+
+    lines.append("")
+    lines.append("GSE UTILIZATION  (cumulative battery % consumed  |  tasks completed)")
+    lines.append("-" * 60)
     for gse in sorted(gse_lst, key=lambda g: g.id):
-        bar_width = 30
+        bar_width = 25
         filled = round(bar_width * gse.total_energy_consumed / max_energy)
         bar = "#" * filled + "-" * (bar_width - filled)
-        lines.append(f"  GSE {gse.id:<3}  {gse.total_energy_consumed:>8.1f}%  [{bar}]")
+        lines.append(f"  GSE {gse.id:<3}  {gse.total_energy_consumed:>8.1f}%  [{bar}]  tasks: {gse.completed_tasks}")
     lines.append("=" * 60)
 
     mode = "a" if filepath is not None else "w"
