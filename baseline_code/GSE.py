@@ -58,6 +58,7 @@ class GSE(object):
         self.charge_time_elapsed = 0.0  # verstreken oplaadtijd in huidige sessie
         self.low_soc_threshold   = 20.0  # onder deze waarde niet meer bieden + naar depot
         self.critical_soc_threshold = 10.0  # noodgeval: direct naar depot tijdens rijden
+        self.total_energy_consumed = 0.0  # cumulatief accuverbruik over gehele simulatie (%)
 
         # --- Pad & beweging ---
         self.path_to_goal = []   # lijst van (node_id, tijdstip) tuples
@@ -92,7 +93,9 @@ class GSE(object):
         """
         if self.status == "taxiing":
             # Accu verbruik alleen tijdens rijden
-            self.soc = max(0.0, self.soc - self.consumption_rate * dt)
+            drain = min(self.soc, self.consumption_rate * dt)
+            self.soc -= drain
+            self.total_energy_consumed += drain
 
         elif self.status == "charging":
             # Vaste oplaadduur van charge_duration minuten; daarna volledig opgeladen
@@ -227,7 +230,13 @@ class GSE(object):
 
     def plan_to_node(self, node_id, nodes_dict, heuristics, t, stage=None, label="goal"):
         self.goal = node_id
-        self.start = self.current_node
+        # Als de GSE midden op een edge zit (positie ≠ huidige node), plan dan vanaf
+        # het volgende knooppunt waarnaartoe al gereden wordt. Dit voorkomt dat het
+        # nieuwe pad diagonaal loopt vanaf de tussenliggende positie.
+        current_node_pos = self.nodes_dict[self.current_node]["xy_pos"]
+        mid_edge = (math.dist(self.position, current_node_pos) > 1e-3
+                    and self.from_to[0] != self.from_to[1])
+        self.start = self.from_to[1] if mid_edge else self.current_node
         self.status = "taxiing"
         self.task_stage = stage
         self.work_end_time = None
@@ -299,20 +308,18 @@ class GSE(object):
             - xy_start : (x, y) van het huidige knooppunt
             - xy_next  : (x, y) van het volgende knooppunt
         """
-        if xy_start[0] == xy_next[0]:          # verticale beweging
-            if xy_start[1] > xy_next[1]:
-                self.heading = 180
-            elif xy_start[1] < xy_next[1]:
-                self.heading = 0
-            # anders ongewijzigd
-        elif xy_start[1] == xy_next[1]:         # horizontale beweging
-            if xy_start[0] > xy_next[0]:
-                self.heading = 90
-            elif xy_start[0] < xy_next[0]:
-                self.heading = 270
-            # anders ongewijzigd
+        dx = xy_next[0] - xy_start[0]
+        dy = xy_next[1] - xy_start[1]
+        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+            return  # geen beweging, behoud huidige heading
+        if abs(dx) < 1e-9:                      # puur verticaal
+            self.heading = 0 if dy > 0 else 180
+        elif abs(dy) < 1e-9:                    # puur horizontaal
+            self.heading = 270 if dx > 0 else 90
         else:
-            raise Exception(f"[GSE {self.id}] Ongeldige beweging van {xy_start} naar {xy_next}")
+            # Diagonale beweging (kan optreden bij herplanning midden op een edge).
+            # Bereken de hoek met atan2 zodat we niet crashen.
+            self.heading = round(math.degrees(math.atan2(-dx, dy)) % 360)
 
     def move(self, dt, t):
         """

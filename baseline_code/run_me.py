@@ -3,6 +3,7 @@ Run-me.py is the main file of the simulation. Run this file to run the simulatio
 """
 
 from pathlib import Path
+from datetime import datetime
 import math
 import random
 import sys
@@ -19,6 +20,7 @@ from Fleet_manager import Fleet_manager
 from auction_system import AuctionSystem
 
 BASE_DIR = Path(__file__).resolve().parent
+LOG_DIR  = Path("/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs")
 
 # =============================================================================
 # SIMULATION PARAMETERS  (pas hier aan)
@@ -27,7 +29,7 @@ nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
 plane_data_file = "Data/Plane_data.xlsx"
 
-simulation_duration_hours = 12
+simulation_duration_hours = 4
 simulation_time = simulation_duration_hours * 60  # 12 pseudo-hours = 720 simulated minutes
 planner = "Independent"
 
@@ -39,7 +41,9 @@ departure_delay_minutes = 5
 # --- [NIEUW] GSE configuratie ---
 GSE_COUNT = 5
 GSE_RANDOM_SEED = None
-GSE_SPEED = 4.0  # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
+GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
+GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
+               #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
 
 # Visualisatie
 plot_graph         = False
@@ -240,6 +244,73 @@ def pace_simulation(sim_minutes, real_seconds_per_pseudo_minute, simulation_star
         timer.sleep(remaining_sleep)
 
 
+def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, gse_speed,
+                  gse_type_label, filepath=None):
+    """
+    Schrijft een log-bestand weg voor deze simulatierun.
+    Als filepath opgegeven is, wordt eraan toegevoegd (append); anders nieuw bestand.
+    Bestandsnaam nieuw bestand: run_YYYY-MM-DD_HH-MM-SS_<type>.log
+    """
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    run_time = datetime.now()
+    filename = filepath if filepath is not None \
+        else log_dir / f"run_{run_time.strftime('%Y-%m-%d_%H-%M-%S')}_{gse_type_label}.log"
+
+    # --- Turnaround times ---
+    completed = [(p.id, p.turnaround_time) for p in plane_schedule if p.turnaround_time is not None]
+    incomplete = [p.id for p in plane_schedule if p.turnaround_time is None]
+    total_turnaround = sum(tt for _, tt in completed)
+
+    # --- GSE utiliteit ---
+    # totaal accuverbruik per GSE over de gehele simulatie (in %)
+    max_energy = max((g.total_energy_consumed for g in gse_lst), default=1.0) or 1.0
+
+    lines = []
+    lines.append("=" * 60)
+    lines.append("SIMULATION RUN LOG")
+    lines.append(f"GSE type   : {gse_type_label.upper()}")
+    lines.append(f"Date/time  : {run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"Duration   : {simulation_duration_hours} hours ({simulation_duration_hours * 60} min)")
+    lines.append(f"GSE count  : {len(gse_lst)}  |  speed: {gse_speed}")
+    first_gse = gse_lst[0]
+    lines.append(f"GSE params : charge_duration={first_gse.charge_duration:.0f} min  |  "
+                 f"base_consumption={first_gse.base_consumption_rate}%/unit")
+    lines.append("=" * 60)
+
+    lines.append("")
+    lines.append("TURNAROUND TIMES")
+    lines.append("-" * 40)
+    for plane_id, tt in sorted(completed):
+        lines.append(f"  {plane_id:<20} {tt:>7.1f} min")
+    for plane_id in sorted(incomplete):
+        lines.append(f"  {plane_id:<20}   incomplete")
+    lines.append("-" * 40)
+    lines.append(f"  {'Total (' + str(len(completed)) + ' planes)':<20} {total_turnaround:>7.1f} min")
+    if completed:
+        lines.append(f"  {'Average':<20} {total_turnaround / len(completed):>7.1f} min")
+
+    lines.append("")
+    lines.append("GSE UTILIZATION  (cumulative battery % consumed)")
+    lines.append("-" * 40)
+    for gse in sorted(gse_lst, key=lambda g: g.id):
+        bar_width = 30
+        filled = round(bar_width * gse.total_energy_consumed / max_energy)
+        bar = "#" * filled + "-" * (bar_width - filled)
+        lines.append(f"  GSE {gse.id:<3}  {gse.total_energy_consumed:>8.1f}%  [{bar}]")
+    lines.append("=" * 60)
+
+    mode = "a" if filepath is not None else "w"
+    with open(filename, mode) as f:
+        if filepath is not None:
+            f.write("\n")  # lege regel als scheiding tussen de twee secties
+        f.write("\n".join(lines) + "\n")
+
+    print(f"[Log] Run log saved to: {filename}")
+    return filename
+
+
 def _gse_task_description(gse):
     """Geeft een leesbare taakomschrijving terug voor de gegeven GSE."""
     if gse.status == "charging":
@@ -298,297 +369,249 @@ def print_gse_status_table(gse_lst, t, prev_line_count=0):
     return len(lines)
 
 # =============================================================================
-# INITIALISATIE
+# INITIALISATIE  (layout – eenmalig geladen, gedeeld tussen runs)
 # =============================================================================
 nodes_dict, edges_dict, start_and_goal_locations = import_layout(nodes_file, edges_file)
 graph      = create_graph(nodes_dict, edges_dict, plot_graph)
 heuristics = calc_heuristics(graph, nodes_dict)
 
-# --- Geplande vliegtuigen uit Plane_data.xlsx ---
-plane_schedule = load_plane_schedule(
-    plane_data_file,
-    nodes_dict,
-    unloading_duration_minutes,
-    loading_duration_minutes,
-    departure_delay_minutes,
-    base_dir=BASE_DIR,
-)
-plane_schedule_lookup = build_plane_schedule_lookup(plane_schedule)
-active_planes = []
-gse_spawn_config = build_random_gse_spawn_config(
-    nodes_dict,
-    GSE_COUNT,
-    seed=GSE_RANDOM_SEED,
-)
-
-# --- Oplaadstation nodes uit de layout ---
 charging_node_ids = [nid for nid, props in nodes_dict.items() if props["type"] == "charging"]
 if not charging_node_ids:
     raise ValueError("Geen oplaadstation nodes gevonden in de layout (type='charging').")
 print(f"[Init] Oplaadstations gevonden: nodes {charging_node_ids}")
 
-# --- [NIEUW] Maak GSE-vloot aan ---
-gse_lst = []
-for gse_id, start_node in gse_spawn_config:
-    gse = GSE(gse_id=gse_id, start_node=start_node,
-              nodes_dict=nodes_dict, charging_nodes=charging_node_ids, speed=GSE_SPEED)
-    gse_lst.append(gse)
-print(f"[Init] {len(gse_lst)} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
-
-# --- [NIEUW] Fleet Manager en Auction System ---
-fleet_manager  = Fleet_manager(nodes_dict)
-auction_system = AuctionSystem(gse_lst)
-
-# Bijhouden welke servicetaken al een GSE toegewezen hebben gekregen
-# zodat we niet bij elke tijdstap opnieuw een veiling houden voor dezelfde service.
-auctioned_tasks = set()
-
-if visualization:
-    map_properties = map_initialization(nodes_dict, edges_dict)
-
 
 # =============================================================================
-# SIMULATIELUS
+# SIMULATIEFUNCTIE
 # =============================================================================
-running       = True
-escape_pressed = False
-time_end      = simulation_time
-dt            = 1.0   # 1 simulatiestap = 1 pseudo-minuut
-t             = 0
-step_count    = 0
-real_seconds_per_pseudo_minute = real_minutes_per_pseudo_hour
-simulation_start_wall_time = timer.perf_counter()
-_status_table_lines = 0  # bijhouden hoeveel regels de statustabel heeft afgedrukt
+def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_filepath=None,
+                   gse_spawn_config=None):
+    """
+    Voert één volledige simulatie uit met de opgegeven GSE accuparameters.
+    Laadt het vliegtuigschema opnieuw zodat elke run met verse Plane-objecten start.
+    Als log_filepath opgegeven is, wordt het log aan dat bestand toegevoegd.
+    """
+    print(f"\n{'=' * 60}")
+    print(f"  Starting {gse_type_label.upper()} simulation")
+    print(f"  charge_duration={charge_duration} min  |  base_consumption={base_consumption_rate}%/unit")
+    print(f"{'=' * 60}")
 
-print("Simulation Started")
-while running:
-    t = round(t, 2)
+    # --- Vliegtuigschema (verse Plane-objecten per run) ---
+    plane_schedule = load_plane_schedule(
+        plane_data_file,
+        nodes_dict,
+        unloading_duration_minutes,
+        loading_duration_minutes,
+        departure_delay_minutes,
+        base_dir=BASE_DIR,
+    )
+    plane_schedule_lookup = build_plane_schedule_lookup(plane_schedule)
+    active_planes = []
 
-    # --- Stopconditie ---
-    if t >= time_end or escape_pressed:
-        running = False
-        pg.quit()
-        print("Simulation Stopped")
-        break
+    # --- GSE-vloot ---
+    if gse_spawn_config is None:
+        gse_spawn_config = build_random_gse_spawn_config(nodes_dict, GSE_COUNT, seed=GSE_RANDOM_SEED)
+    gse_lst = []
+    for gse_id, start_node in gse_spawn_config:
+        gse = GSE(gse_id=gse_id, start_node=start_node,
+                  nodes_dict=nodes_dict, charging_nodes=charging_node_ids, speed=GSE_SPEED)
+        gse.charge_duration       = charge_duration
+        gse.base_consumption_rate = base_consumption_rate
+        gse.set_speed(GSE_SPEED)
+        gse_lst.append(gse)
+    print(f"[Init] {len(gse_lst)} {gse_type_label} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
 
-    # -------------------------------------------------------------------------
-    # Spawn / verwijder geplande vliegtuigen uit Plane_data.xlsx
-    # -------------------------------------------------------------------------
-    new_planes = spawn_planes(t, plane_schedule_lookup)
-    if new_planes:
-        active_planes.extend(new_planes)
+    # --- Fleet Manager en Auction System ---
+    fleet_manager  = Fleet_manager(nodes_dict)
+    auction_system = AuctionSystem(gse_lst)
+    auctioned_tasks = set()
 
-    plane_by_id = {plane.id: plane for plane in active_planes}
+    if visualization:
+        map_properties = map_initialization(nodes_dict, edges_dict)
 
-    # Rond services af waarvan de werktijd is verstreken.
-    for gse in gse_lst:
-        if gse.status == "working" and gse.work_end_time is not None and t >= gse.work_end_time - 1e-9:
-            plane = plane_by_id.get(gse.assigned_plane_id)
-            if plane is None:
-                raise ValueError(
-                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
-                )
-            if gse.assigned_service_type == "load":
-                plane.complete_current_service(t)
-                print(
-                    f"[Plane {plane.id}] t={t}: loading completed, departure possible at t={plane.departure_ready_time}"
-                )
-                gse.finish_working(nodes_dict, heuristics, t)
-            elif gse.assigned_service_type == "unload":
-                plane.complete_current_service(t)
-                plane.mark_unloading_departed(gse.id)
-                print(
-                    f"[Plane {plane.id}] t={t}: unloading completed at gate, "
-                    f"cargo en route to node {plane.cargo_to}; loading unlocks once GSE {gse.id} departs"
-                )
-                gse.plan_to_node(
-                    plane.cargo_to,
-                    nodes_dict,
-                    heuristics,
-                    t,
-                    stage="unload_to_cargo",
-                    label=f"cargo node {plane.cargo_to} with cargo from plane {plane.id}",
-                )
-            else:
-                raise ValueError(
-                    f"GSE {gse.id} has unknown service type '{gse.assigned_service_type}'."
-                )
+    # =========================================================================
+    # SIMULATIELUS
+    # =========================================================================
+    running                        = True
+    escape_pressed                 = False
+    time_end                       = simulation_time
+    dt                             = 1.0
+    t                              = 0
+    step_count                     = 0
+    real_seconds_per_pseudo_minute = real_minutes_per_pseudo_hour
+    simulation_start_wall_time     = timer.perf_counter()
+    _status_table_lines            = 0
 
-    # Vliegtuig vertrekt pas na completed loading + 5 minuten.
-    despawned_ids = {
-        plane.id
-        for plane in active_planes
-        if plane.ready_to_despawn(t)
-    }
-    if despawned_ids:
-        for plane in active_planes:
-            if plane.id in despawned_ids:
-                plane.mark_departed(t)
-                auctioned_tasks.discard((plane.id, "unload"))
-                auctioned_tasks.discard((plane.id, "load"))
-        active_planes = [plane for plane in active_planes if plane.id not in despawned_ids]
+    print("Simulation Started")
+    while running:
+        t = round(t, 2)
+
+        if t >= time_end or escape_pressed:
+            running = False
+            pg.quit()
+            print("Simulation Stopped")
+            break
+
+        # --- Spawn / verwijder vliegtuigen ---
+        new_planes = spawn_planes(t, plane_schedule_lookup)
+        if new_planes:
+            active_planes.extend(new_planes)
+
         plane_by_id = {plane.id: plane for plane in active_planes}
 
-    # -------------------------------------------------------------------------
-    # [NIEUW] Fleet Manager: update gate-bezettingskaart
-    # -------------------------------------------------------------------------
-    fleet_manager.update_gate_status(active_planes, aircraft_lst=gse_lst, t=t)
+        # Rond services af waarvan de werktijd is verstreken.
+        for gse in gse_lst:
+            if gse.status == "working" and gse.work_end_time is not None and t >= gse.work_end_time - 1e-9:
+                plane = plane_by_id.get(gse.assigned_plane_id)
+                if plane is None:
+                    raise ValueError(
+                        f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                    )
+                if gse.assigned_service_type == "load":
+                    plane.complete_current_service(t)
+                    print(
+                        f"[Plane {plane.id}] t={t}: loading completed, departure possible at t={plane.departure_ready_time}"
+                    )
+                    gse.finish_working(nodes_dict, heuristics, t)
+                elif gse.assigned_service_type == "unload":
+                    plane.complete_current_service(t)
+                    plane.mark_unloading_departed(gse.id)
+                    print(
+                        f"[Plane {plane.id}] t={t}: unloading completed at gate, "
+                        f"cargo en route to node {plane.cargo_to}; loading unlocks once GSE {gse.id} departs"
+                    )
+                    gse.plan_to_node(
+                        plane.cargo_to,
+                        nodes_dict,
+                        heuristics,
+                        t,
+                        stage="unload_to_cargo",
+                        label=f"cargo node {plane.cargo_to} with cargo from plane {plane.id}",
+                    )
+                else:
+                    raise ValueError(
+                        f"GSE {gse.id} has unknown service type '{gse.assigned_service_type}'."
+                    )
 
-    # -------------------------------------------------------------------------
-    # [NIEUW] Auction: wijs GSEs toe aan unload/load taken
-    # -------------------------------------------------------------------------
-    assign_service_tasks(
-        active_planes,
-        auctioned_tasks,
-        auction_system,
-        heuristics,
-        nodes_dict,
-        t,
-    )
+        # Vliegtuig vertrekt pas na completed loading + vertrekvertraging.
+        despawned_ids = {plane.id for plane in active_planes if plane.ready_to_despawn(t)}
+        if despawned_ids:
+            for plane in active_planes:
+                if plane.id in despawned_ids:
+                    plane.mark_departed(t)
+                    auctioned_tasks.discard((plane.id, "unload"))
+                    auctioned_tasks.discard((plane.id, "load"))
+            active_planes = [plane for plane in active_planes if plane.id not in despawned_ids]
+            plane_by_id   = {plane.id: plane for plane in active_planes}
 
-    # -------------------------------------------------------------------------
-    # [NIEUW] GSEs die 'needs_charging' zijn sturen naar het depot
-    # -------------------------------------------------------------------------
-    for gse in gse_lst:
-        if gse.status == "needs_charging":
-            gse.go_charge(nodes_dict, heuristics, t)
+        fleet_manager.update_gate_status(active_planes, aircraft_lst=gse_lst, t=t)
 
-    should_render_step = visualization and step_count % render_every_n_steps == 0
-    if should_render_step:
-        escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
-
-    movement_substeps = 1
-    if should_render_step:
-        taxiing_gses = [gse for gse in gse_lst if gse.status == "taxiing"]
-        if taxiing_gses:
-            max_step_distance = max(gse.speed * dt for gse in taxiing_gses)
-            movement_substeps = max(1, math.ceil(max_step_distance / gse_visual_max_step_distance))
-
-    sub_dt = dt / movement_substeps
-    for substep_index in range(movement_substeps):
-        substep_time = round(t + (substep_index + 1) * sub_dt, 2)
+        assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
         for gse in gse_lst:
-            if gse.status == "taxiing":
-                gse.move(sub_dt, substep_time)
-            gse.update_soc(sub_dt)
+            if gse.status == "needs_charging":
+                gse.go_charge(nodes_dict, heuristics, t)
 
+        should_render_step = visualization and step_count % render_every_n_steps == 0
         if should_render_step:
-            escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, substep_time)
-            if escape_pressed:
-                break
-            pace_simulation(
-                substep_time,
-                real_seconds_per_pseudo_minute,
-                simulation_start_wall_time,
-            )
+            escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
 
-    if not should_render_step:
-        pace_simulation(
-            t + dt,
-            real_seconds_per_pseudo_minute,
-            simulation_start_wall_time,
-        )
+        movement_substeps = 1
+        if should_render_step:
+            taxiing_gses = [gse for gse in gse_lst if gse.status == "taxiing"]
+            if taxiing_gses:
+                max_step_distance = max(gse.speed * dt for gse in taxiing_gses)
+                movement_substeps = max(1, math.ceil(max_step_distance / gse_visual_max_step_distance))
 
-    # Zodra de unload-GSE het plane node heeft verlaten, mag loading worden toegewezen.
-    gse_by_id = {gse.id: gse for gse in gse_lst}
-    for plane in active_planes:
-        if plane.status != "awaiting_load_release" or plane.load_release_gse_id is None:
-            continue
-        unloading_gse = gse_by_id.get(plane.load_release_gse_id)
-        if unloading_gse is None:
-            raise ValueError(
-                f"Unload-release GSE {plane.load_release_gse_id} for plane {plane.id} not found."
-            )
-        if unloading_gse.position != plane.xy_pos:
-            plane.release_for_loading()
-            print(
-                f"[Plane {plane.id}] t={t}: unloading GSE left gate, loading can now be assigned"
-            )
+        sub_dt = dt / movement_substeps
+        for substep_index in range(movement_substeps):
+            substep_time = round(t + (substep_index + 1) * sub_dt, 2)
 
-    assign_service_tasks(
-        active_planes,
-        auctioned_tasks,
-        auction_system,
-        heuristics,
-        nodes_dict,
-        t,
-    )
+            for gse in gse_lst:
+                if gse.status == "taxiing":
+                    gse.move(sub_dt, substep_time)
+                gse.update_soc(sub_dt)
 
-    # Start nieuw gearriveerde unload/load services.
-    plane_by_id = {plane.id: plane for plane in active_planes}
-    for gse in gse_lst:
-        if gse.status == "at_cargo_pickup":
-            plane = plane_by_id.get(gse.assigned_plane_id)
-            if plane is None:
+            if should_render_step:
+                escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, substep_time)
+                if escape_pressed:
+                    break
+                pace_simulation(substep_time, real_seconds_per_pseudo_minute, simulation_start_wall_time)
+
+        if not should_render_step:
+            pace_simulation(t + dt, real_seconds_per_pseudo_minute, simulation_start_wall_time)
+
+        # Zodra de unload-GSE het plane node heeft verlaten, mag loading worden toegewezen.
+        gse_by_id = {gse.id: gse for gse in gse_lst}
+        for plane in active_planes:
+            if plane.status != "awaiting_load_release" or plane.load_release_gse_id is None:
+                continue
+            unloading_gse = gse_by_id.get(plane.load_release_gse_id)
+            if unloading_gse is None:
                 raise ValueError(
-                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                    f"Unload-release GSE {plane.load_release_gse_id} for plane {plane.id} not found."
                 )
-            gse.plan_to_node(
-                plane.node_id,
-                nodes_dict,
-                heuristics,
-                t,
-                stage="load_to_plane",
-                label=f"plane {plane.id} with cargo from node {plane.cargo_from}",
-            )
-            print(
-                f"[Plane {plane.id}] t={t}: cargo picked up at node {plane.cargo_from}, "
-                f"en route to gate {plane.node_id}"
-            )
-        elif gse.status == "at_cargo_dropoff":
-            plane = plane_by_id.get(gse.assigned_plane_id)
-            if plane is None:
-                raise ValueError(
-                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
-                )
-            print(
-                f"[Plane {plane.id}] t={t}: unloaded cargo delivered to node {plane.cargo_to}"
-            )
-            gse.finish_working(nodes_dict, heuristics, t)
-        elif gse.status == "working" and gse.work_end_time is None:
-            plane = plane_by_id.get(gse.assigned_plane_id)
-            if plane is None:
-                raise ValueError(
-                    f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
-                )
-            gse.work_end_time = plane.start_service(gse.assigned_service_type, gse.id, t)
-            print(
-                f"[Plane {plane.id}] t={t}: {gse.assigned_service_type} started by GSE {gse.id}, "
-                f"completes at t={gse.work_end_time}"
-            )
+            if unloading_gse.position != plane.xy_pos:
+                plane.release_for_loading()
+                print(f"[Plane {plane.id}] t={t}: unloading GSE left gate, loading can now be assigned")
 
-    if step_count % status_print_interval == 0:
-        _status_table_lines = print_gse_status_table(gse_lst, t, _status_table_lines)
+        assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
-    t = t + dt
-    step_count += 1
+        # Start nieuw gearriveerde unload/load services.
+        plane_by_id = {plane.id: plane for plane in active_planes}
+        for gse in gse_lst:
+            if gse.status == "at_cargo_pickup":
+                plane = plane_by_id.get(gse.assigned_plane_id)
+                if plane is None:
+                    raise ValueError(
+                        f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                    )
+                gse.plan_to_node(
+                    plane.node_id, nodes_dict, heuristics, t,
+                    stage="load_to_plane",
+                    label=f"plane {plane.id} with cargo from node {plane.cargo_from}",
+                )
+                print(
+                    f"[Plane {plane.id}] t={t}: cargo picked up at node {plane.cargo_from}, "
+                    f"en route to gate {plane.node_id}"
+                )
+            elif gse.status == "at_cargo_dropoff":
+                plane = plane_by_id.get(gse.assigned_plane_id)
+                if plane is None:
+                    raise ValueError(
+                        f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                    )
+                print(f"[Plane {plane.id}] t={t}: unloaded cargo delivered to node {plane.cargo_to}")
+                gse.finish_working(nodes_dict, heuristics, t)
+            elif gse.status == "working" and gse.work_end_time is None:
+                plane = plane_by_id.get(gse.assigned_plane_id)
+                if plane is None:
+                    raise ValueError(
+                        f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
+                    )
+                gse.work_end_time = plane.start_service(gse.assigned_service_type, gse.id, t)
+                print(
+                    f"[Plane {plane.id}] t={t}: {gse.assigned_service_type} started by GSE {gse.id}, "
+                    f"completes at t={gse.work_end_time}"
+                )
+
+        if step_count % status_print_interval == 0:
+            _status_table_lines = print_gse_status_table(gse_lst, t, _status_table_lines)
+
+        t = t + dt
+        step_count += 1
+
+    write_run_log(LOG_DIR, gse_lst, plane_schedule, simulation_duration_hours, GSE_SPEED,
+                  gse_type_label, filepath=log_filepath)
 
 
 # =============================================================================
-# ANALYSE VAN OUTPUTDATA
+# UITVOERING
 # =============================================================================
-# Voeg hier analyse toe, bijvoorbeeld:
-#   - Gemiddelde SoC over de tijd
-#   - Aantal voltooide taken per GSE
-#   - Conflicten of wachttijden
-print("\n--- Eindrapport GSEs ---")
-for gse in gse_lst:
-    print(gse)
-
-print("\n--- Turnaround Times Planes ---")
-total_turnaround_time = 0.0
-completed_turnaround_count = 0
-for plane in plane_schedule:
-    turnaround_time = plane.turnaround_time
-    if turnaround_time is None:
-        print(f"Plane {plane.id}: turnaround incomplete (status={plane.status})")
-        continue
-    total_turnaround_time += turnaround_time
-    completed_turnaround_count += 1
-    print(f"Plane {plane.id}: turnaround time = {turnaround_time:.1f} minutes")
-
-print(
-    f"Totaal turnaround time ({completed_turnaround_count} voltooide planes): "
-    f"{total_turnaround_time:.1f} minutes"
-)
+if GSE_ELECTRIC:
+    run_simulation(15.0, 0.5, "electric")
+else:
+    shared_log          = LOG_DIR / f"run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_comparison.log"
+    shared_spawn_config = build_random_gse_spawn_config(nodes_dict, GSE_COUNT, seed=GSE_RANDOM_SEED)
+    run_simulation(15.0, 0.5, "electric", log_filepath=shared_log, gse_spawn_config=shared_spawn_config)
+    run_simulation(2.0, 0.25, "gas",      log_filepath=shared_log, gse_spawn_config=shared_spawn_config)

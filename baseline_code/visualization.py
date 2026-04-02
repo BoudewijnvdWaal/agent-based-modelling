@@ -127,6 +127,7 @@ def map_initialization(nodes_dict, edges_dict, spawn_schedule=None):  # function
     os.environ['SDL_VIDEO_WINDOW_POS'] = "%d,%d" % (int(0.5 * true_res[0] - 0.5 * outer_reso[0]), int(
         0.5 * true_res[1] - 0.5 * outer_reso[1]))  # make sure maps comes in middle screen
 
+    font_cache.clear()  # invalidate cached fonts from any previous run before re-initialising pygame
     pg.init()  # initialise pygame
     scr = pg.display.set_mode(outer_reso)
     scrrect = scr.get_rect()  # get rectangular area of the surface
