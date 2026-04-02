@@ -5,6 +5,7 @@ Run-me.py is the main file of the simulation. Run this file to run the simulatio
 from pathlib import Path
 import math
 import random
+import sys
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -38,7 +39,6 @@ departure_delay_minutes = 5
 # --- [NIEUW] GSE configuratie ---
 GSE_COUNT = 5
 GSE_RANDOM_SEED = None
-DEPOT_NODE = 2   # node_id van het laadstation/depot; pas aan naar jouw layout
 GSE_SPEED = 4.0  # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
 
 # Visualisatie
@@ -47,6 +47,9 @@ visualization      = True
 real_minutes_per_pseudo_hour = 1.0  # 12 pseudo-hours -> 12 real minutes
 gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
 render_every_n_steps = 1
+
+# GSE status tabel: print elke N simulatiestappen naar de terminal
+status_print_interval = 10  # zet op 1 voor elke stap, hoger voor minder output
 
 
 # =============================================================================
@@ -236,6 +239,64 @@ def pace_simulation(sim_minutes, real_seconds_per_pseudo_minute, simulation_star
     if remaining_sleep > 0:
         timer.sleep(remaining_sleep)
 
+
+def _gse_task_description(gse):
+    """Geeft een leesbare taakomschrijving terug voor de gegeven GSE."""
+    if gse.status == "charging":
+        return f"charging ({gse.charge_time_elapsed:.0f}/{gse.charge_duration:.0f} min)"
+    if gse.status == "needs_charging":
+        return "waiting to charge"
+    if gse.task_stage == "to_depot":
+        return "heading to depot"
+    if gse.assigned_plane_id is not None:
+        p = f"plane {gse.assigned_plane_id}"
+        stage_labels = {
+            "load_to_cargo":    f"load: fetching cargo  ({p})",
+            "load_to_plane":    f"load: delivering to {p}",
+            "unload_to_plane":  f"unload: going to {p}",
+            "unload_to_cargo":  f"unload: delivering cargo ({p})",
+            "service_to_plane": f"service: going to {p}",
+        }
+        if gse.task_stage in stage_labels:
+            return stage_labels[gse.task_stage]
+        if gse.status == "working":
+            return f"{gse.assigned_service_type} on {p}"
+        if gse.status in ("at_cargo_pickup", "at_cargo_dropoff"):
+            return f"{gse.status.replace('_', ' ')} ({p})"
+    return "-"
+
+
+def print_gse_status_table(gse_lst, t, prev_line_count=0):
+    """
+    Print een live-updatende statustabel van alle GSEs naar de terminal.
+    Gebruikt ANSI escape codes om de vorige tabel te overschrijven.
+    Geeft het aantal afgedrukte regels terug (doorgeven als prev_line_count bij volgende aanroep).
+    """
+    col_task = 36
+    header = (f"  {'GSE':>3} │ {'SoC':>6} │ {'Available':>9} │ {'Status':<20} │ Task")
+    sep    = "  " + "─" * (3 + 3 + 8 + 3 + 11 + 3 + 22 + 3 + col_task)
+
+    lines = [
+        f"  ── GSE Status  t = {t:.0f} min {'─' * 40}",
+        header,
+        sep,
+    ]
+    for gse in gse_lst:
+        avail = "yes" if gse.status == "available" else "no"
+        task  = _gse_task_description(gse)
+        lines.append(
+            f"  {gse.id:>3} │ {gse.soc:>5.1f}% │ {avail:>9} │ {gse.status:<20} │ {task}"
+        )
+    lines.append(sep)
+
+    if prev_line_count > 0:
+        sys.stdout.write(f"\033[{prev_line_count}A\033[J")
+
+    output = "\n".join(lines) + "\n"
+    sys.stdout.write(output)
+    sys.stdout.flush()
+    return len(lines)
+
 # =============================================================================
 # INITIALISATIE
 # =============================================================================
@@ -260,11 +321,17 @@ gse_spawn_config = build_random_gse_spawn_config(
     seed=GSE_RANDOM_SEED,
 )
 
+# --- Oplaadstation nodes uit de layout ---
+charging_node_ids = [nid for nid, props in nodes_dict.items() if props["type"] == "charging"]
+if not charging_node_ids:
+    raise ValueError("Geen oplaadstation nodes gevonden in de layout (type='charging').")
+print(f"[Init] Oplaadstations gevonden: nodes {charging_node_ids}")
+
 # --- [NIEUW] Maak GSE-vloot aan ---
 gse_lst = []
 for gse_id, start_node in gse_spawn_config:
     gse = GSE(gse_id=gse_id, start_node=start_node,
-              nodes_dict=nodes_dict, depot_node=DEPOT_NODE, speed=GSE_SPEED)
+              nodes_dict=nodes_dict, charging_nodes=charging_node_ids, speed=GSE_SPEED)
     gse_lst.append(gse)
 print(f"[Init] {len(gse_lst)} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
 
@@ -291,6 +358,7 @@ t             = 0
 step_count    = 0
 real_seconds_per_pseudo_minute = real_minutes_per_pseudo_hour
 simulation_start_wall_time = timer.perf_counter()
+_status_table_lines = 0  # bijhouden hoeveel regels de statustabel heeft afgedrukt
 
 print("Simulation Started")
 while running:
@@ -422,15 +490,6 @@ while running:
             simulation_start_wall_time,
         )
 
-    # -------------------------------------------------------------------------
-    # [NIEUW] GSEs die bij het depot zijn aangekomen: zet op 'charging'
-    # (move() zet status al op 'charging' via _on_goal_reached, dit is een
-    #  extra vangnet voor het geval de logica afwijkt)
-    # -------------------------------------------------------------------------
-    for gse in gse_lst:
-        if gse.status == "arrived" and gse.current_node == DEPOT_NODE:
-            gse.status = "charging"
-
     # Zodra de unload-GSE het plane node heeft verlaten, mag loading worden toegewezen.
     gse_by_id = {gse.id: gse for gse in gse_lst}
     for plane in active_planes:
@@ -498,6 +557,9 @@ while running:
                 f"[Plane {plane.id}] t={t}: {gse.assigned_service_type} started by GSE {gse.id}, "
                 f"completes at t={gse.work_end_time}"
             )
+
+    if step_count % status_print_interval == 0:
+        _status_table_lines = print_gse_status_table(gse_lst, t, _status_table_lines)
 
     t = t + dt
     step_count += 1

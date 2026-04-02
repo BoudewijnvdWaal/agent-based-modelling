@@ -12,21 +12,21 @@ class GSE(object):
     # Initialisatie
     # -------------------------------------------------------------------------
 
-    def __init__(self, gse_id, start_node, nodes_dict, depot_node=None, speed=1.0):
+    def __init__(self, gse_id, start_node, nodes_dict, charging_nodes=None, speed=1.0):
         """
         Initialisatie van een GSE object.
         INPUT:
-            - gse_id      : [int] uniek id voor deze GSE
-            - start_node  : [int] node_id van de startpositie (= depot)
-            - nodes_dict  : [dict] kopie van het nodes_dict
-            - depot_node  : [int] node_id van het laadstation/depot.
-                            Als None wordt start_node als depot gebruikt.
+            - gse_id        : [int] uniek id voor deze GSE
+            - start_node    : [int] node_id van de startpositie
+            - nodes_dict    : [dict] kopie van het nodes_dict
+            - charging_nodes: [list[int]] node_ids van alle oplaadstations.
+                              De GSE rijdt altijd naar de dichtstbijzijnde.
         """
 
         # --- Vaste parameters ---
-        self.id          = gse_id
-        self.nodes_dict  = nodes_dict
-        self.depot_node  = depot_node if depot_node is not None else start_node
+        self.id             = gse_id
+        self.nodes_dict     = nodes_dict
+        self.charging_nodes = list(charging_nodes) if charging_nodes else []
         self.base_speed  = 1.0          # referentiesnelheid voor batterijverbruik
         self.base_consumption_rate = 0.5  # verbruik per tijdseenheid bij base_speed
         self.speed       = self.base_speed
@@ -54,9 +54,10 @@ class GSE(object):
         # --- Batterij ---
         self.soc              = 100.0   # State of Charge in %
         self.consumption_rate = self.base_consumption_rate
-        self.charging_rate    = 2.0    # oplaadsnelheid per tijdseenheid in depot
-        self.low_soc_threshold   = 25.0  # onder deze waarde niet meer bieden
-        self.critical_soc_threshold = 15.0  # onder deze waarde direct naar depot
+        self.charge_duration  = 15.0   # vaste oplaadtijd in minuten (altijd volledig opladen)
+        self.charge_time_elapsed = 0.0  # verstreken oplaadtijd in huidige sessie
+        self.low_soc_threshold   = 20.0  # onder deze waarde niet meer bieden + naar depot
+        self.critical_soc_threshold = 10.0  # noodgeval: direct naar depot tijdens rijden
 
         # --- Pad & beweging ---
         self.path_to_goal = []   # lijst van (node_id, tijdstip) tuples
@@ -90,36 +91,60 @@ class GSE(object):
             - dt: grootte van de tijdstap
         """
         if self.status == "taxiing":
+            # Accu verbruik alleen tijdens rijden
             self.soc = max(0.0, self.soc - self.consumption_rate * dt)
 
         elif self.status == "charging":
-            self.soc = min(100.0, self.soc + self.charging_rate * dt)
-            if self.soc >= 100.0:
+            # Vaste oplaadduur van charge_duration minuten; daarna volledig opgeladen
+            self.charge_time_elapsed += dt
+            if self.charge_time_elapsed >= self.charge_duration:
                 self.soc = 100.0
+                self.charge_time_elapsed = 0.0
                 self.status = "available"
                 self.goal = None
-                print(f"[GSE {self.id}] Volledig opgeladen, status -> available")
+                print(f"[GSE {self.id}] Volledig opgeladen na {self.charge_duration:.0f} minuten, status -> available")
 
-        # Kritieke accu: forceer terugkeer naar depot
-        if self.soc < self.critical_soc_threshold and self.status == "available":
+        # Lage accu (10–20%): stuur naar depot zodra GSE beschikbaar of klaar met werken
+        if self.soc <= self.low_soc_threshold and self.status == "available":
             self.status = "needs_charging"
-            print(f"[GSE {self.id}] Kritieke SoC ({self.soc:.1f}%), terugkeer naar depot vereist")
+            print(f"[GSE {self.id}] Lage SoC ({self.soc:.1f}%), status -> needs_charging")
+
+        # Noodgeval: accu kritiek laag (<10%) tijdens rijden naar een taak
+        elif (self.soc <= self.critical_soc_threshold
+              and self.status == "taxiing"
+              and self.task_stage != "to_depot"):
+            self.status = "needs_charging"
+            print(f"[GSE {self.id}] Kritieke SoC ({self.soc:.1f}%) tijdens rijden, noodstop -> needs_charging")
+
+    def _nearest_charging_node(self, from_node, heuristics):
+        """
+        Geeft (node_id, afstand) terug van het dichtstbijzijnde bereikbare oplaadstation.
+        """
+        best_id, best_dist = None, float('inf')
+        for cn in self.charging_nodes:
+            dist = heuristics.get(from_node, {}).get(cn, float('inf'))
+            if dist < best_dist:
+                best_dist, best_id = dist, cn
+        return best_id, best_dist
 
     def go_charge(self, nodes_dict, heuristics, t):
         """
-        Plant een pad terug naar het depot om op te laden.
+        Plant een pad naar het dichtstbijzijnde oplaadstation.
         Roep aan wanneer status == 'needs_charging'.
         """
+        target, _ = self._nearest_charging_node(self.current_node, heuristics)
+        if target is None:
+            raise Exception(
+                f"[GSE {self.id}] Geen bereikbaar oplaadstation vanuit node {self.current_node}"
+            )
         self.plan_to_node(
-            self.depot_node,
+            target,
             nodes_dict,
             heuristics,
             t,
             stage="to_depot",
-            label="depot (charging)",
+            label=f"charging station (node {target})",
         )
-        # Na aankomst in depot zet move() status -> "arrived";
-        # vervolgens dient de simulatieloop status -> "charging" te zetten.
 
     # -------------------------------------------------------------------------
     # Veiling (Auction)
@@ -129,14 +154,16 @@ class GSE(object):
         """
         Berekent een bod voor een taak bij gate_node_id.
         Lagere waarde = beter bod.
-        Biedt float('inf') als GSE niet beschikbaar of accu te laag is.
+        Biedt float('inf') als GSE niet beschikbaar, accu te laag, of als de GSE
+        niet genoeg accu heeft om de taak te voltooien én terug naar het depot te rijden.
         INPUT:
-            - gate_node_id : [int] node_id van de gate met het vliegtuig
-            - heuristics   : [dict] voorberekende afstanden tussen nodes
+            - gate_node_id  : [int] eerste doelnode (cargo_from bij load, plane.node_id bij unload)
+            - heuristics    : [dict] voorberekende afstanden tussen nodes
+            - second_node_id: [int] tweede doelnode (plane.node_id bij load, cargo_to bij unload)
         RETURNS:
             - bid : [float] bod (lagere waarde = beter)
         """
-        if self.status != "available" or self.soc < self.low_soc_threshold:
+        if self.status != "available" or self.soc <= self.low_soc_threshold:
             return float('inf')
 
         # Controleer of de route bestaat
@@ -148,6 +175,20 @@ class GSE(object):
             if second_node_id not in heuristics.get(gate_node_id, {}):
                 return float('inf')
             distance += heuristics[gate_node_id][second_node_id]
+            last_node = second_node_id
+        else:
+            last_node = gate_node_id
+
+        # Controleer of de GSE na de taak het dichtstbijzijnde oplaadstation kan bereiken
+        _, return_distance = self._nearest_charging_node(last_node, heuristics)
+        if return_distance == float('inf'):
+            return float('inf')
+
+        # Accu-verbruik per afstandseenheid is constant ongeacht snelheid
+        energy_per_unit = self.base_consumption_rate  # = consumption_rate / speed
+        energy_needed = (distance + return_distance) * energy_per_unit
+        if energy_needed > self.soc:
+            return float('inf')
 
         # Straf voor lage accu zodat vollere GSEs voorrang krijgen bij gelijke afstand
         battery_penalty = (100.0 - self.soc) * 0.2
@@ -176,7 +217,8 @@ class GSE(object):
                 return
             next_node_id      = self.path_to_goal[0][0]
             self.from_to      = [path[0][0], next_node_id]
-            print(f"[GSE {self.id}] Pad naar {label}: {path}")
+            node_sequence = " -> ".join(str(int(node_id)) for node_id, _ in path)
+            print(f"[GSE {self.id}] Pad naar {label}: {node_sequence}")
         else:
             raise Exception(f"[GSE {self.id}] Geen pad gevonden naar {label} (node {self.goal})")
 
@@ -343,13 +385,21 @@ class GSE(object):
         self.from_to = [self.current_node, self.current_node]
 
         if self.task_stage == "to_depot":
-            # Terug in depot: begin met opladen
+            # Veiligheidscheck: zorg dat we daadwerkelijk op een oplaadstation staan
+            node_type = self.nodes_dict[self.current_node]["type"]
+            if node_type != "charging":
+                raise Exception(
+                    f"[GSE {self.id}] t={t}: aankomst bij node {self.current_node} (type='{node_type}') "
+                    f"maar dit is geen oplaadstation!"
+                )
             self.status = "charging"
+            self.charge_time_elapsed = 0.0
             self.work_end_time = None
             self.assigned_plane_id = None
             self.assigned_service_type = None
             self.task_stage = None
-            print(f"[GSE {self.id}] t={t}: depot bereikt, status -> charging (SoC={self.soc:.1f}%)")
+            print(f"[GSE {self.id}] t={t}: oplaadstation {self.current_node} bereikt, status -> charging "
+                  f"(SoC={self.soc:.1f}%, duurt {self.charge_duration:.0f} min)")
         elif self.task_stage == "load_to_cargo":
             self.status = "at_cargo_pickup"
             print(f"[GSE {self.id}] t={t}: cargo pickup bereikt voor plane {self.assigned_plane_id}")
