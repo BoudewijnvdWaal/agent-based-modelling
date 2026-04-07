@@ -66,6 +66,7 @@ class GSE(object):
         self.from_to      = [0, 0]
         self.heading      = 0
         self.last_node    = None
+        self.waiting      = False
 
         self.set_speed(speed)
 

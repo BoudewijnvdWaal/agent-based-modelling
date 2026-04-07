@@ -224,7 +224,8 @@ def render_simulation_frame(map_properties, gse_lst, active_planes, t):
         current_states[gse.id] = {
             "ac_id":   f"GSE {gse.id}",
             "xy_pos":  gse.position,
-            "heading": gse.heading
+            "heading": gse.heading,
+            "waiting": gse.waiting
         }
 
     gate_states = {
@@ -526,6 +527,22 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
         should_render_step = visualization and step_count % render_every_n_steps == 0
         if should_render_step:
             escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
+        
+        RESERVATION_HORIZON = 1  # Hoeveel nodes vooruit kijken we?
+        reserved_nodes = {}      # Format: {node_id: gse_id}
+
+        # 1. Vul de reserveringslijst. 
+        # Door te sorteren op ID krijgt de GSE met het laagste nummer altijd voorrang (Prioriteit A).
+        for gse in sorted(gse_lst, key=lambda x: x.id):
+            if gse.status == "taxiing":
+                # Reserveer huidige node + de volgende N nodes op het pad
+                # We pakken alleen de node_id uit de (node_id, tijdstip) tuples in path_to_goal
+                next_nodes = [n_id for n_id, t_step in gse.path_to_goal[:RESERVATION_HORIZON]]
+                nodes_to_reserve = [gse.current_node] + next_nodes
+                
+                for node in nodes_to_reserve:
+                    if node not in reserved_nodes:
+                        reserved_nodes[node] = gse.id
 
         movement_substeps = 1
         if should_render_step:
@@ -540,7 +557,21 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
 
             for gse in gse_lst:
                 if gse.status == "taxiing":
-                    gse.move(sub_dt, substep_time)
+                    # Kijk wat de volgende node is waar de GSE naartoe wil
+                    next_node = gse.from_to[1]
+                    
+                    # Check wie deze node gereserveerd heeft
+                    blocker_id = reserved_nodes.get(next_node)
+                    
+                    # Als de node bezet is door IEMAND ANDERS, dan wachten
+                    if blocker_id is not None and blocker_id != gse.id:
+                        gse.waiting = True 
+                        # We roepen gse.move() NIET aan, dus hij blijft staan
+                    else:
+                        gse.waiting = False
+                        gse.move(sub_dt, substep_time)
+                
+                # De accu loopt altijd leeg, ook als je stilstaat met draaiende motor (waiting)
                 gse.update_soc(sub_dt)
 
             if should_render_step:
