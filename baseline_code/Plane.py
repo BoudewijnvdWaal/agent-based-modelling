@@ -47,6 +47,8 @@ class Plane:
         self.current_service_end_time = None
         self.current_service_gse_id = None
         self.assigned_gse_id = None
+        self.unload_start_time = None
+        self.load_start_time = None
         self.unloading_complete_time = None
         self.loading_complete_time = None
         self.departure_ready_time = None
@@ -101,6 +103,10 @@ class Plane:
         self.current_service_type = service_type
         self.current_service_gse_id = gse_id
         self.current_service_end_time = float(start_time) + duration
+        if service_type == "unload":
+            self.unload_start_time = float(start_time)
+        elif service_type == "load":
+            self.load_start_time = float(start_time)
         return self.current_service_end_time
 
     def complete_current_service(self, completion_time):

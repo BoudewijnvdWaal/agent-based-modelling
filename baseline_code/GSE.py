@@ -59,6 +59,7 @@ class GSE(object):
         self.low_soc_threshold   = 20.0  # onder deze waarde niet meer bieden + naar depot
         self.critical_soc_threshold = 10.0  # noodgeval: direct naar depot tijdens rijden
         self.total_energy_consumed = 0.0  # cumulatief accuverbruik over gehele simulatie (%)
+        self.completed_tasks       = 0    # aantal voltooide servicetaken
 
         # --- Pad & beweging ---
         self.path_to_goal = []   # lijst van (node_id, tijdstip) tuples
@@ -432,6 +433,8 @@ class GSE(object):
         self.assigned_service_type = None
         self.work_end_time = None
         self.task_stage = None
+
+        self.completed_tasks += 1
 
         if self.soc < self.low_soc_threshold:
             # Accu te laag: direct terug naar depot

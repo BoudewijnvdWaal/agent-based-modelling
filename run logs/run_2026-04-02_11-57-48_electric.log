@@ -1,0 +1,34 @@
+============================================================
+SIMULATION RUN LOG
+GSE type   : ELECTRIC
+Date/time  : 2026-04-02 11:57:48
+Duration   : 4 hours (240 min)
+GSE count  : 5  |  speed: 4.0
+GSE params : charge_duration=15 min  |  base_consumption=0.5%/unit
+============================================================
+
+FLIGHT TIMES
+  Flight        Turnaround   Wait unload    Wait load
+  -----------------------------------------------------
+  AF1341            47.0 min         1.0 min       11.0 min
+  BA441             54.0 min         1.0 min       18.0 min
+  EK149         incomplete         1.0 min   incomplete
+  IB3171        incomplete    incomplete   incomplete
+  KL642             54.0 min         6.0 min       13.0 min
+  LH997             53.0 min         2.0 min       16.0 min
+  OS374         incomplete    incomplete   incomplete
+  SK553         incomplete         6.0 min   incomplete
+  TK1954        incomplete         5.0 min       14.0 min
+  U28672            63.0 min         2.0 min       26.0 min
+  -----------------------------------------------------
+  Total (5 completed)       271.0 min
+  Average           54.2 min
+
+GSE UTILIZATION  (cumulative battery % consumed  |  tasks completed)
+------------------------------------------------------------
+  GSE 1        63.1%  [#################--------]  tasks: 2
+  GSE 2        64.9%  [#################--------]  tasks: 2
+  GSE 3        94.1%  [#########################]  tasks: 2
+  GSE 4        95.6%  [#########################]  tasks: 2
+  GSE 5        63.5%  [#################--------]  tasks: 2
+============================================================
