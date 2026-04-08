@@ -376,13 +376,10 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
             continue
         # We tellen hoeveel GSE's op deze plek NIET aan het wachten zijn
         # Als er meer dan 1 GSE echt aan het rijden is op dezelfde plek, is het pas een botsing.
-        active_movers = []
-        for s in states_at_position:
-            is_taxiing = s.get("status") == "taxiing"
-            is_waiting = s.get("waiting", False)
-            
-            if is_taxiing and not is_waiting:
-                active_movers.append(s)
+        active_movers = [
+            s for s in states_at_position 
+            if s.get("status") == "taxiing" and s.get("waiting") == False
+        ]
         
         if len(active_movers) <= 1:
             # Iemand staat stil of er is maar één rijdend voertuig: geen collision melding!
