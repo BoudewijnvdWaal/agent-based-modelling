@@ -528,21 +528,40 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
         if should_render_step:
             escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
         
-        RESERVATION_HORIZON = 1  # Hoeveel nodes vooruit kijken we?
+        RESERVATION_HORIZON = 3  # Nodes vooruit kijken voor conflictdetectie en herrouting
         reserved_nodes = {}      # Format: {node_id: gse_id}
 
-        # 1. Vul de reserveringslijst. 
-        # Door te sorteren op ID krijgt de GSE met het laagste nummer altijd voorrang (Prioriteit A).
+        # 1. Vul de reserveringslijst (laagste ID = hoogste prioriteit).
         for gse in sorted(gse_lst, key=lambda x: x.id):
             if gse.status == "taxiing":
-                # Reserveer huidige node + de volgende N nodes op het pad
-                # We pakken alleen de node_id uit de (node_id, tijdstip) tuples in path_to_goal
-                next_nodes = [n_id for n_id, t_step in gse.path_to_goal[:RESERVATION_HORIZON]]
-                nodes_to_reserve = [gse.current_node] + next_nodes
-                
-                for node in nodes_to_reserve:
+                next_nodes = [n_id for n_id, _ in gse.path_to_goal[:RESERVATION_HORIZON]]
+                for node in [gse.current_node] + next_nodes:
                     if node not in reserved_nodes:
                         reserved_nodes[node] = gse.id
+
+        # 2. Detecteer conflicten en herplan lagere-prioriteit GSEs om de blokkerende nodes heen.
+        #    Hogere-prioriteit GSEs (lager ID) rijden ongestoord door.
+        for gse in sorted(gse_lst, key=lambda x: x.id):
+            if gse.status != "taxiing":
+                continue
+            lookahead = [n_id for n_id, _ in gse.path_to_goal[:RESERVATION_HORIZON]]
+            conflicting = {n for n in lookahead if reserved_nodes.get(n, gse.id) != gse.id}
+            if not conflicting:
+                gse.waiting = False
+                continue
+            # Sluit het doelknooppunt uit: dat moet altijd bereikbaar blijven.
+            forbidden = conflicting - {gse.goal}
+            try:
+                gse.plan_to_node(
+                    gse.goal, nodes_dict, heuristics, t,
+                    stage=gse.task_stage, label=f"herroute naar {gse.goal}",
+                    forbidden_nodes=forbidden,
+                )
+                gse.waiting = False
+                print(f"[GSE {gse.id}] t={t}: herroute om nodes {forbidden} heen naar doel {gse.goal}")
+            except Exception:
+                # Geen alternatief pad beschikbaar: wacht tot de weg vrij is.
+                gse.waiting = True
 
         movement_substeps = 1
         if should_render_step:
@@ -556,22 +575,9 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
             substep_time = round(t + (substep_index + 1) * sub_dt, 2)
 
             for gse in gse_lst:
-                if gse.status == "taxiing":
-                    # Kijk wat de volgende node is waar de GSE naartoe wil
-                    next_node = gse.from_to[1]
-                    
-                    # Check wie deze node gereserveerd heeft
-                    blocker_id = reserved_nodes.get(next_node)
-                    
-                    # Als de node bezet is door IEMAND ANDERS, dan wachten
-                    if blocker_id is not None and blocker_id != gse.id:
-                        gse.waiting = True 
-                        # We roepen gse.move() NIET aan, dus hij blijft staan
-                    else:
-                        gse.waiting = False
-                        gse.move(sub_dt, substep_time)
-                
-                # De accu loopt altijd leeg, ook als je stilstaat met draaiende motor (waiting)
+                if gse.status == "taxiing" and not gse.waiting:
+                    gse.move(sub_dt, substep_time)
+                # De accu loopt altijd leeg, ook als je stilstaat (waiting)
                 gse.update_soc(sub_dt)
 
             if should_render_step:

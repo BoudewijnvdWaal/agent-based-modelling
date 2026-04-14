@@ -205,23 +205,32 @@ class GSE(object):
     # Padplanning
     # -------------------------------------------------------------------------
 
-    def _plan_path(self, nodes_dict, heuristics, t, label="goal"):
+    def _plan_path(self, nodes_dict, heuristics, t, label="goal", forbidden_nodes=None):
         """
         Interne helper: voert A* uit van self.start naar self.goal.
+        forbidden_nodes: optionele set van node_ids die vermeden moeten worden (herrouting).
         """
         success, path = simple_single_agent_astar(
-            nodes_dict, self.start, self.goal, heuristics, t
+            nodes_dict, self.start, self.goal, heuristics, t, forbidden_nodes=forbidden_nodes
         )
         if success:
-            self.path_to_goal = path[1:]
-            if not self.path_to_goal:
-                self.from_to = [path[0][0], path[0][0]]
-                self.current_node = path[0][0]
-                self.position = self.nodes_dict[self.current_node]["xy_pos"]
-                self._on_goal_reached(t)
-                return
-            next_node_id      = self.path_to_goal[0][0]
-            self.from_to      = [path[0][0], next_node_id]
+            mid_edge = (self.start != self.current_node)
+            if mid_edge:
+                # GSE is mid-edge between current_node and from_to[1] (= self.start).
+                # Keep from_to unchanged so the GSE finishes the current edge first.
+                # Store the full path (including self.start) so _advance_path_segment
+                # correctly pops each hop when the GSE arrives at each node.
+                self.path_to_goal = path
+            else:
+                self.path_to_goal = path[1:]
+                if not self.path_to_goal:
+                    self.from_to = [path[0][0], path[0][0]]
+                    self.current_node = path[0][0]
+                    self.position = self.nodes_dict[self.current_node]["xy_pos"]
+                    self._on_goal_reached(t)
+                    return
+                next_node_id  = self.path_to_goal[0][0]
+                self.from_to  = [path[0][0], next_node_id]
             node_sequence = " -> ".join(str(int(node_id)) for node_id, _ in path)
             print(f"[GSE {self.id}] Pad naar {label}: {node_sequence}")
         else:
@@ -230,7 +239,7 @@ class GSE(object):
         if path[0][1] != t:
             raise Exception(f"[GSE {self.id}] Tijdstip van pad klopt niet: verwacht {t}, kreeg {path[0][1]}")
 
-    def plan_to_node(self, node_id, nodes_dict, heuristics, t, stage=None, label="goal"):
+    def plan_to_node(self, node_id, nodes_dict, heuristics, t, stage=None, label="goal", forbidden_nodes=None):
         self.goal = node_id
         # Als de GSE midden op een edge zit (positie ≠ huidige node), plan dan vanaf
         # het volgende knooppunt waarnaartoe al gereden wordt. Dit voorkomt dat het
@@ -242,7 +251,7 @@ class GSE(object):
         self.status = "taxiing"
         self.task_stage = stage
         self.work_end_time = None
-        self._plan_path(nodes_dict, heuristics, t, label=label)
+        self._plan_path(nodes_dict, heuristics, t, label=label, forbidden_nodes=forbidden_nodes)
 
     def plan_service_task(self, plane, nodes_dict, heuristics, t, service_type=None):
         self.assigned_plane_id = plane.id

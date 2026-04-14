@@ -50,7 +50,7 @@ def heuristicFinder(graph, start_node, goal_node):
     return path, path_length
 
 
-def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time_start):
+def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time_start, forbidden_nodes=None):
     # def a_star(my_map, start_loc, goal_loc, h_values, agent, constraints):
     """
     Single agent A* search. Time start can only be the time that an agent is at a node.
@@ -60,6 +60,7 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
         - goal_node = [int] node_id of node to which planning is done
         - heuristics = [dict] dict with shortest path distance between nodes. Dictionary in a dictionary. Key of first dict is fromnode and key in second dict is tonode.
         - time_start = [float] planning start time.
+        - forbidden_nodes = [set|None] node_ids that may not be visited (used for dynamic rerouting).
         - Hint: do you need more inputs?
     RETURNS:
         - success = True/False. True if path is found and False is no path is found
@@ -80,12 +81,21 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
     root = {'loc': from_node_id, 'g_val': 0, 'h_val': h_value, 'parent': None, 'timestep': time_start}
     push_node(open_list, root)
     closed_list[(root['loc'], root['timestep'])] = root
+    # Depth limit: a simple path can visit at most len(nodes_dict) nodes.
+    # Without this, the time-expanded closed list (keyed on (loc, timestep)) never
+    # terminates when forbidden_nodes make the goal unreachable — each cycle generates
+    # a unique (loc, t+k) key forever.
+    max_depth = len(nodes_dict)
     while len(open_list) > 0:
         curr = pop_node(open_list)
+        if curr['g_val'] > max_depth:
+            continue
         if curr['loc'] == goal_node_id and curr['timestep'] >= earliest_goal_timestep:
             return True, get_path(curr)
-        
+
         for neighbor in nodes_dict[curr['loc']]["neighbors"]:
+            if forbidden_nodes and neighbor in forbidden_nodes:
+                continue
             child = {'loc': neighbor,
                     'g_val': curr['g_val'] + 1.0,
                     'h_val': heuristics[neighbor][goal_node_id],
@@ -99,7 +109,8 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
             else:
                 closed_list[(child['loc'], child['timestep'])] = child
                 push_node(open_list, child)
-    print("No path found, "+str(len(closed_list))+" nodes visited")
+    if not forbidden_nodes:
+        print("No path found, "+str(len(closed_list))+" nodes visited")
     return False, [] # Failed to find solutions
 
 def push_node(open_list, node):
