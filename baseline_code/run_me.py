@@ -12,12 +12,14 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import time as timer
 import pygame as pg
+
 from single_agent_planner import calc_heuristics
 from visualization import map_initialization, map_running
 from GSE import GSE
 from Plane import load_plane_schedule, build_plane_schedule_lookup, spawn_planes
 from Fleet_manager import Fleet_manager
 from auction_system import AuctionSystem
+from cbs import resolve_conflicts  # <-- IMPORTED CBS MODULE
 
 BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR  = Path("/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs")
@@ -57,21 +59,10 @@ status_print_interval = 10  # zet op 1 voor elke stap, hoger voor minder output
 
 
 # =============================================================================
-# FUNCTIE-DEFINITIES  (ongewijzigd t.o.v. origineel, behalve spawn_aircrafts)
+# FUNCTIE-DEFINITIES  
 # =============================================================================
 
 def import_layout(nodes_file, edges_file):
-    """
-    Imports layout information from xlsx files and converts this into dictionaries.
-    INPUT:
-        - nodes_file = xlsx file with node input data
-        - edges_file = xlsx file with edge input data
-    RETURNS:
-        - nodes_dict = dictionary with nodes and node properties
-        - edges_dict = dictionary with edges and edge properties
-        - start_and_goal_locations = dictionary with node ids for arrival runways,
-          departure runways and gates
-    """
     gates_xy      = []
     cargoep_xy    = []
     chargingrr_xy = []
@@ -146,9 +137,6 @@ def import_layout(nodes_file, edges_file):
 
 
 def create_graph(nodes_dict, edges_dict, plot_graph=True):
-    """
-    Creates networkX graph based on nodes and edges and optionally plots it.
-    """
     graph = nx.DiGraph()
 
     for node in nodes_dict:
@@ -194,10 +182,6 @@ def assign_service_tasks(active_planes, auctioned_tasks, auction_system, heurist
 
 
 def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
-    """
-    Generate (gse_id, start_node) tuples for a randomly placed GSE fleet.
-    GSEs spawn on non-gate nodes to avoid occupying aircraft gates at t=0.
-    """
     candidate_nodes = [
         node_id
         for node_id, node_props in nodes_dict.items()
@@ -216,9 +200,6 @@ def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
 
 
 def render_simulation_frame(map_properties, gse_lst, active_planes, t):
-    """
-    Teken de huidige simulatiestatus op het scherm.
-    """
     current_states = {}
     for gse in gse_lst:
         current_states[gse.id] = {
@@ -236,9 +217,6 @@ def render_simulation_frame(map_properties, gse_lst, active_planes, t):
 
 
 def pace_simulation(sim_minutes, real_seconds_per_pseudo_minute, simulation_start_wall_time):
-    """
-    Houd de simulatie gelijk aan de gewenste wall-clock snelheid.
-    """
     target_elapsed_seconds = sim_minutes * real_seconds_per_pseudo_minute
     remaining_sleep = target_elapsed_seconds - (timer.perf_counter() - simulation_start_wall_time)
     if remaining_sleep > 0:
@@ -247,11 +225,6 @@ def pace_simulation(sim_minutes, real_seconds_per_pseudo_minute, simulation_star
 
 def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, gse_speed,
                   gse_type_label, filepath=None):
-    """
-    Schrijft een log-bestand weg voor deze simulatierun.
-    Als filepath opgegeven is, wordt eraan toegevoegd (append); anders nieuw bestand.
-    Bestandsnaam nieuw bestand: run_YYYY-MM-DD_HH-MM-SS_<type>.log
-    """
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -259,12 +232,9 @@ def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, g
     filename = filepath if filepath is not None \
         else log_dir / f"run_{run_time.strftime('%Y-%m-%d_%H-%M-%S')}_{gse_type_label}.log"
 
-    # --- Turnaround times ---
     completed = [(p.id, p.turnaround_time) for p in plane_schedule if p.turnaround_time is not None]
     total_turnaround = sum(tt for _, tt in completed)
 
-    # --- GSE utiliteit ---
-    # totaal accuverbruik per GSE over de gehele simulatie (in %)
     max_energy = max((g.total_energy_consumed for g in gse_lst), default=1.0) or 1.0
 
     lines = []
@@ -316,7 +286,7 @@ def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, g
     mode = "a" if filepath is not None else "w"
     with open(filename, mode) as f:
         if filepath is not None:
-            f.write("\n")  # lege regel als scheiding tussen de twee secties
+            f.write("\n")
         f.write("\n".join(lines) + "\n")
 
     print(f"[Log] Run log saved to: {filename}")
@@ -324,7 +294,6 @@ def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, g
 
 
 def _gse_task_description(gse):
-    """Geeft een leesbare taakomschrijving terug voor de gegeven GSE."""
     if gse.status == "charging":
         return f"charging ({gse.charge_time_elapsed:.0f}/{gse.charge_duration:.0f} min)"
     if gse.status == "needs_charging":
@@ -350,11 +319,6 @@ def _gse_task_description(gse):
 
 
 def print_gse_status_table(gse_lst, t, prev_line_count=0):
-    """
-    Print een live-updatende statustabel van alle GSEs naar de terminal.
-    Gebruikt ANSI escape codes om de vorige tabel te overschrijven.
-    Geeft het aantal afgedrukte regels terug (doorgeven als prev_line_count bij volgende aanroep).
-    """
     col_task = 36
     header = (f"  {'GSE':>3} │ {'SoC':>6} │ {'Available':>9} │ {'Status':<20} │ Task")
     sep    = "  " + "─" * (3 + 3 + 8 + 3 + 11 + 3 + 22 + 3 + col_task)
@@ -381,7 +345,7 @@ def print_gse_status_table(gse_lst, t, prev_line_count=0):
     return len(lines)
 
 # =============================================================================
-# INITIALISATIE  (layout – eenmalig geladen, gedeeld tussen runs)
+# INITIALISATIE 
 # =============================================================================
 nodes_dict, edges_dict, start_and_goal_locations = import_layout(nodes_file, edges_file)
 graph      = create_graph(nodes_dict, edges_dict, plot_graph)
@@ -398,17 +362,11 @@ print(f"[Init] Oplaadstations gevonden: nodes {charging_node_ids}")
 # =============================================================================
 def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_filepath=None,
                    gse_spawn_config=None):
-    """
-    Voert één volledige simulatie uit met de opgegeven GSE accuparameters.
-    Laadt het vliegtuigschema opnieuw zodat elke run met verse Plane-objecten start.
-    Als log_filepath opgegeven is, wordt het log aan dat bestand toegevoegd.
-    """
     print(f"\n{'=' * 60}")
     print(f"  Starting {gse_type_label.upper()} simulation")
     print(f"  charge_duration={charge_duration} min  |  base_consumption={base_consumption_rate}%/unit")
     print(f"{'=' * 60}")
 
-    # --- Vliegtuigschema (verse Plane-objecten per run) ---
     plane_schedule = load_plane_schedule(
         plane_data_file,
         nodes_dict,
@@ -420,7 +378,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
     plane_schedule_lookup = build_plane_schedule_lookup(plane_schedule)
     active_planes = []
 
-    # --- GSE-vloot ---
     if gse_spawn_config is None:
         gse_spawn_config = build_random_gse_spawn_config(nodes_dict, GSE_COUNT, seed=GSE_RANDOM_SEED)
     gse_lst = []
@@ -433,7 +390,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
         gse_lst.append(gse)
     print(f"[Init] {len(gse_lst)} {gse_type_label} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
 
-    # --- Fleet Manager en Auction System ---
     fleet_manager  = Fleet_manager(nodes_dict)
     auction_system = AuctionSystem(gse_lst)
     auctioned_tasks = set()
@@ -464,14 +420,12 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
             print("Simulation Stopped")
             break
 
-        # --- Spawn / verwijder vliegtuigen ---
         new_planes = spawn_planes(t, plane_schedule_lookup)
         if new_planes:
             active_planes.extend(new_planes)
 
         plane_by_id = {plane.id: plane for plane in active_planes}
 
-        # Rond services af waarvan de werktijd is verstreken.
         for gse in gse_lst:
             if gse.status == "working" and gse.work_end_time is not None and t >= gse.work_end_time - 1e-9:
                 plane = plane_by_id.get(gse.assigned_plane_id)
@@ -505,7 +459,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
                         f"GSE {gse.id} has unknown service type '{gse.assigned_service_type}'."
                     )
 
-        # Vliegtuig vertrekt pas na completed loading + vertrekvertraging.
         despawned_ids = {plane.id for plane in active_planes if plane.ready_to_despawn(t)}
         if despawned_ids:
             for plane in active_planes:
@@ -528,40 +481,8 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
         if should_render_step:
             escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
         
-        RESERVATION_HORIZON = 3  # Nodes vooruit kijken voor conflictdetectie en herrouting
-        reserved_nodes = {}      # Format: {node_id: gse_id}
-
-        # 1. Vul de reserveringslijst (laagste ID = hoogste prioriteit).
-        for gse in sorted(gse_lst, key=lambda x: x.id):
-            if gse.status == "taxiing":
-                next_nodes = [n_id for n_id, _ in gse.path_to_goal[:RESERVATION_HORIZON]]
-                for node in [gse.current_node] + next_nodes:
-                    if node not in reserved_nodes:
-                        reserved_nodes[node] = gse.id
-
-        # 2. Detecteer conflicten en herplan lagere-prioriteit GSEs om de blokkerende nodes heen.
-        #    Hogere-prioriteit GSEs (lager ID) rijden ongestoord door.
-        for gse in sorted(gse_lst, key=lambda x: x.id):
-            if gse.status != "taxiing":
-                continue
-            lookahead = [n_id for n_id, _ in gse.path_to_goal[:RESERVATION_HORIZON]]
-            conflicting = {n for n in lookahead if reserved_nodes.get(n, gse.id) != gse.id}
-            if not conflicting:
-                gse.waiting = False
-                continue
-            # Sluit het doelknooppunt uit: dat moet altijd bereikbaar blijven.
-            forbidden = conflicting - {gse.goal}
-            try:
-                gse.plan_to_node(
-                    gse.goal, nodes_dict, heuristics, t,
-                    stage=gse.task_stage, label=f"herroute naar {gse.goal}",
-                    forbidden_nodes=forbidden,
-                )
-                gse.waiting = False
-                print(f"[GSE {gse.id}] t={t}: herroute om nodes {forbidden} heen naar doel {gse.goal}")
-            except Exception:
-                # Geen alternatief pad beschikbaar: wacht tot de weg vrij is.
-                gse.waiting = True
+        # --- CBS: Conflict Resolution ---
+        resolve_conflicts(gse_lst, nodes_dict, heuristics, t)
 
         movement_substeps = 1
         if should_render_step:
@@ -577,7 +498,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
             for gse in gse_lst:
                 if gse.status == "taxiing" and not gse.waiting:
                     gse.move(sub_dt, substep_time)
-                # De accu loopt altijd leeg, ook als je stilstaat (waiting)
                 gse.update_soc(sub_dt)
 
             if should_render_step:
@@ -589,7 +509,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
         if not should_render_step:
             pace_simulation(t + dt, real_seconds_per_pseudo_minute, simulation_start_wall_time)
 
-        # Zodra de unload-GSE het plane node heeft verlaten, mag loading worden toegewezen.
         gse_by_id = {gse.id: gse for gse in gse_lst}
         for plane in active_planes:
             if plane.status != "awaiting_load_release" or plane.load_release_gse_id is None:
@@ -605,7 +524,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
 
         assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
-        # Start nieuw gearriveerde unload/load services.
         plane_by_id = {plane.id: plane for plane in active_planes}
         for gse in gse_lst:
             if gse.status == "at_cargo_pickup":
