@@ -23,6 +23,7 @@ from cbs import resolve_conflicts  # <-- IMPORTED CBS MODULE
 
 BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR  = Path("/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs")
+#LOG_DIR  = Path("C:\\Users\\phili\\Documents\\TU Delft\\MSc\\AE - Agent_based_modelling\\agent-based-modelling\\baseline_code")
 
 # =============================================================================
 # SIMULATION PARAMETERS  (pas hier aan)
