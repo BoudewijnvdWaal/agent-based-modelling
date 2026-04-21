@@ -1,0 +1,43 @@
+
+============================================================
+SIMULATION RUN LOG
+GSE type   : GAS
+Date/time  : 2026-04-21 15:12:54
+Duration   : 12 hours (720 min)
+GSE count  : 7  |  speed: 4.0
+GSE params : charge_duration=2 min  |  base_consumption=0.25%/unit
+============================================================
+
+FLIGHT TIMES
+  Flight        Turnaround   Wait unload    Wait load
+  -----------------------------------------------------
+  AF1341        incomplete        22.0 min   incomplete
+  AF782             54.0 min         1.0 min       18.0 min
+  BA774            152.0 min        10.0 min      107.0 min
+  EK149         incomplete        72.0 min   incomplete
+  EK533         incomplete         3.0 min   incomplete
+  IB204            276.0 min        11.0 min      230.0 min
+  IB452         incomplete       247.0 min   incomplete
+  KL123         incomplete    incomplete   incomplete
+  KL184            240.0 min       165.0 min       40.0 min
+  KL642            375.0 min         6.0 min      334.0 min
+  LH412             53.0 min         3.0 min       15.0 min
+  LH997             45.0 min         2.0 min        8.0 min
+  OS374         incomplete       204.0 min   incomplete
+  QF640         incomplete    incomplete   incomplete
+  TK1954        incomplete        59.0 min   incomplete
+  U28672           277.0 min         4.0 min      238.0 min
+  -----------------------------------------------------
+  Total (8 completed)      1472.0 min
+  Average          184.0 min
+
+GSE UTILIZATION  (cumulative battery % consumed  |  tasks completed)
+------------------------------------------------------------
+  GSE 1       524.0%  [#######################--]  tasks: 3
+  GSE 2       576.0%  [#########################]  tasks: 0
+  GSE 3       553.0%  [########################-]  tasks: 2
+  GSE 4       567.0%  [########################-]  tasks: 4
+  GSE 5       582.0%  [#########################]  tasks: 2
+  GSE 6       486.0%  [#####################----]  tasks: 2
+  GSE 7       514.0%  [######################---]  tasks: 2
+============================================================

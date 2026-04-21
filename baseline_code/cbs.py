@@ -194,7 +194,7 @@ def _replan_around(gse, blocked_nodes, nodes_dict, heuristics, t):
     Probeert een nieuw pad te vinden naar gse.goal zonder te "vliegen".
     """
     is_moving_mid_edge = hasattr(gse, 'from_to') and len(gse.from_to) == 2 and gse.from_to[0] != gse.from_to[1]
-    
+
     if is_moving_mid_edge:
         start_node = gse.from_to[1]
     else:

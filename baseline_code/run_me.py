@@ -43,12 +43,12 @@ departure_delay_minutes = 5
 GSE_COUNT = 7
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
-GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
+GSE_ELECTRIC = True  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
                #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
 
 # Visualisatie
 plot_graph         = False
-visualization      = False
+visualization      = True
 real_minutes_per_pseudo_hour = 0.25  # 12 pseudo-hours -> 12 real minutes
 gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
 render_every_n_steps = 1

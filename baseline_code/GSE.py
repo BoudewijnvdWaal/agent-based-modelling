@@ -191,14 +191,12 @@ class GSE(object):
         else:
             last_node = gate_node_id
 
-        # Controleer of de GSE na de taak het dichtstbijzijnde oplaadstation kan bereiken
-        _, return_distance = self._nearest_charging_node(last_node, heuristics)
-        if return_distance == float('inf'):
-            return float('inf')
-
         # Accu-verbruik per afstandseenheid is constant ongeacht snelheid
+        # Alleen de taakafstand telt: finish_working stuurt de GSE daarna naar het depot
+        # als de accu laag is. De return-trip hoeft hier niet meegenomen te worden,
+        # want dat blokkeerde GSEs met 20-37% SoC onnodig van elke taak.
         energy_per_unit = self.base_consumption_rate  # = consumption_rate / speed
-        energy_needed = (distance + return_distance) * energy_per_unit
+        energy_needed = distance * energy_per_unit
         if energy_needed > self.soc:
             return float('inf')
 

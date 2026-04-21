@@ -1,0 +1,43 @@
+
+============================================================
+SIMULATION RUN LOG
+GSE type   : GAS
+Date/time  : 2026-04-21 15:20:16
+Duration   : 12 hours (720 min)
+GSE count  : 7  |  speed: 4.0
+GSE params : charge_duration=2 min  |  base_consumption=0.25%/unit
+============================================================
+
+FLIGHT TIMES
+  Flight        Turnaround   Wait unload    Wait load
+  -----------------------------------------------------
+  AF1341           148.0 min         5.0 min      108.0 min
+  AF782            179.0 min         5.0 min      139.0 min
+  BA774            106.0 min        60.0 min       11.0 min
+  EK149             52.0 min         0.0 min       17.0 min
+  EK533             68.0 min         0.0 min       33.0 min
+  IB204             57.0 min         7.0 min       15.0 min
+  IB452            218.0 min        82.0 min      101.0 min
+  KL123            158.0 min         3.0 min      120.0 min
+  KL184            268.0 min       107.0 min      126.0 min
+  KL642            100.0 min        49.0 min       16.0 min
+  LH412            142.0 min         2.0 min      105.0 min
+  LH997             49.0 min         2.0 min       12.0 min
+  OS374            267.0 min        57.0 min      175.0 min
+  QF640            163.0 min        10.0 min      118.0 min
+  TK1954           303.0 min         1.0 min      267.0 min
+  U28672           146.0 min         5.0 min      106.0 min
+  -----------------------------------------------------
+  Total (16 completed)      2424.0 min
+  Average          151.5 min
+
+GSE UTILIZATION  (cumulative battery % consumed  |  tasks completed)
+------------------------------------------------------------
+  GSE 1       309.0%  [####################-----]  tasks: 3
+  GSE 2       382.0%  [#########################]  tasks: 3
+  GSE 3       342.0%  [######################---]  tasks: 4
+  GSE 4       372.0%  [########################-]  tasks: 2
+  GSE 5       386.0%  [#########################]  tasks: 2
+  GSE 6       319.0%  [#####################----]  tasks: 4
+  GSE 7       283.0%  [##################-------]  tasks: 5
+============================================================
