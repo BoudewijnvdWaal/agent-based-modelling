@@ -5,7 +5,7 @@ Inclusief Spatio-Temporal Node én Edge Reserveringen + Deadlock Breaker.
 
 from single_agent_planner import simple_single_agent_astar
 
-RESERVATION_HORIZON = 5 
+RESERVATION_HORIZON = 2
 TIME_MARGIN = 2  
 
 def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
@@ -62,6 +62,9 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
     for gse in sorted(gse_lst, key=lambda x: x.id, reverse=True):
         if gse.status != "taxiing" or not gse.path_to_goal:
             continue
+        if gse.task_stage == "to_depot":
+            gse.waiting = False
+            continue
 
         blocked_nodes = set()
         is_moving_mid_edge = hasattr(gse, 'from_to') and len(gse.from_to) == 2 and gse.from_to[0] != gse.from_to[1]
@@ -115,6 +118,8 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
         for gse in gse_lst:
             if gse.status != "taxiing" or not gse.path_to_goal:
                 continue
+            if gse.task_stage == "to_depot":
+                continue
 
             coop_blocked = set()
             prev_node = gse.from_to[1] if (hasattr(gse, 'from_to') and len(gse.from_to) == 2) else gse.current_node
@@ -166,15 +171,18 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
             
             if success:
                 if is_moving_mid_edge:
-                    loser.path_to_goal = [(escape_node, t)] + detour[1:]
+                    # Prepend start_node_for_escape so it gets popped when the GSE
+                    # finishes the current edge, then escape_node is the first real step.
+                    loser.path_to_goal = [(start_node_for_escape, t)] + detour
                 else:
-                    loser.path_to_goal = detour[1:]
+                    # detour starts at escape_node; from_to points there already.
+                    loser.path_to_goal = detour
                     loser.from_to = [loser.current_node, escape_node]
             else:
                 if is_moving_mid_edge:
-                    loser.path_to_goal = [(escape_node, t)]
+                    loser.path_to_goal = [(start_node_for_escape, t), (escape_node, t)]
                 else:
-                    loser.path_to_goal = []
+                    loser.path_to_goal = [(escape_node, t)]
                     loser.from_to = [loser.current_node, escape_node]
             
             loser.waiting = False

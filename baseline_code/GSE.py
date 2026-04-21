@@ -121,23 +121,30 @@ class GSE(object):
             self.status = "needs_charging"
             print(f"[GSE {self.id}] Kritieke SoC ({self.soc:.1f}%) tijdens rijden, noodstop -> needs_charging")
 
-    def _nearest_charging_node(self, from_node, heuristics):
+    def _nearest_charging_node(self, from_node, heuristics, busy_nodes=None):
         """
-        Geeft (node_id, afstand) terug van het dichtstbijzijnde bereikbare oplaadstation.
+        Geeft (node_id, afstand) terug van het minst bezette bereikbare oplaadstation.
+        busy_nodes: dict {node_id: count} hoeveel GSEs al op weg zijn naar of staan bij dat station.
         """
-        best_id, best_dist = None, float('inf')
+        best_id, best_score = None, float('inf')
         for cn in self.charging_nodes:
             dist = heuristics.get(from_node, {}).get(cn, float('inf'))
-            if dist < best_dist:
-                best_dist, best_id = dist, cn
+            if dist == float('inf'):
+                continue
+            load = (busy_nodes or {}).get(cn, 0)
+            score = dist + load * 50
+            if score < best_score:
+                best_score = score
+                best_id = cn
+        best_dist = heuristics.get(from_node, {}).get(best_id, float('inf')) if best_id else float('inf')
         return best_id, best_dist
 
-    def go_charge(self, nodes_dict, heuristics, t):
+    def go_charge(self, nodes_dict, heuristics, t, busy_charging_nodes=None):
         """
-        Plant een pad naar het dichtstbijzijnde oplaadstation.
+        Plant een pad naar het minst bezette oplaadstation.
         Roep aan wanneer status == 'needs_charging'.
         """
-        target, _ = self._nearest_charging_node(self.current_node, heuristics)
+        target, _ = self._nearest_charging_node(self.current_node, heuristics, busy_charging_nodes)
         if target is None:
             raise Exception(
                 f"[GSE {self.id}] Geen bereikbaar oplaadstation vanuit node {self.current_node}"

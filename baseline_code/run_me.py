@@ -29,10 +29,9 @@ LOG_DIR  = Path("/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/age
 # =============================================================================
 nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
-plane_data_file = "Data/Plane_data.xlsx"
+plane_data_file = "Data/Planes.xlsx"
 
-simulation_duration_hours = 4
-simulation_time = simulation_duration_hours * 60  # 12 pseudo-hours = 720 simulated minutes
+simulation_duration_hours = 10
 planner = "Independent"
 
 # Service- en vertrektijden van vliegtuigen, in pseudo-minuten
@@ -41,7 +40,7 @@ loading_duration_minutes = 15
 departure_delay_minutes = 5
 
 # --- [NIEUW] GSE configuratie ---
-GSE_COUNT = 5
+GSE_COUNT = 6
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
 GSE_ELECTRIC = True  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
@@ -50,7 +49,7 @@ GSE_ELECTRIC = True  # True = elektrisch (charge_duration=15 min, consumption=0.
 # Visualisatie
 plot_graph         = False
 visualization      = True
-real_minutes_per_pseudo_hour = 1.0  # 12 pseudo-hours -> 12 real minutes
+real_minutes_per_pseudo_hour = 0.25  # 12 pseudo-hours -> 12 real minutes
 gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
 render_every_n_steps = 1
 
@@ -402,7 +401,7 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
     # =========================================================================
     running                        = True
     escape_pressed                 = False
-    time_end                       = simulation_time
+    time_end                       = simulation_duration_hours * 60
     dt                             = 1.0
     t                              = 0
     step_count                     = 0
@@ -473,9 +472,28 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
 
         assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
+        charging_load = {}
+        for gse in gse_lst:
+            if gse.status == "charging" or (gse.status == "taxiing" and gse.task_stage == "to_depot"):
+                if gse.goal is not None:
+                    charging_load[gse.goal] = charging_load.get(gse.goal, 0) + 1
+
         for gse in gse_lst:
             if gse.status == "needs_charging":
-                gse.go_charge(nodes_dict, heuristics, t)
+                if gse.assigned_plane_id is not None:
+                    plane = plane_by_id.get(gse.assigned_plane_id)
+                    if (plane is not None
+                            and plane.status in ("unload_assigned", "load_assigned")
+                            and plane.assigned_gse_id == gse.id):
+                        service_type = "unload" if plane.status == "unload_assigned" else "load"
+                        plane.status = "awaiting_unload" if service_type == "unload" else "awaiting_load"
+                        plane.assigned_gse_id = None
+                        auctioned_tasks.discard((plane.id, service_type))
+                        print(f"[GSE {gse.id}] t={t}: abandoned {service_type} task for plane {plane.id} (low battery), re-queuing for auction")
+                    gse.assigned_plane_id = None
+                gse.go_charge(nodes_dict, heuristics, t, busy_charging_nodes=charging_load)
+                if gse.goal is not None:
+                    charging_load[gse.goal] = charging_load.get(gse.goal, 0) + 1
 
         should_render_step = visualization and step_count % render_every_n_steps == 0
         if should_render_step:
@@ -529,9 +547,9 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
             if gse.status == "at_cargo_pickup":
                 plane = plane_by_id.get(gse.assigned_plane_id)
                 if plane is None:
-                    raise ValueError(
-                        f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
-                    )
+                    print(f"[GSE {gse.id}] t={t}: assigned plane {gse.assigned_plane_id} no longer active, releasing GSE")
+                    gse.finish_working(nodes_dict, heuristics, t)
+                    continue
                 gse.plan_to_node(
                     plane.node_id, nodes_dict, heuristics, t,
                     stage="load_to_plane",
@@ -544,17 +562,17 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
             elif gse.status == "at_cargo_dropoff":
                 plane = plane_by_id.get(gse.assigned_plane_id)
                 if plane is None:
-                    raise ValueError(
-                        f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
-                    )
+                    print(f"[GSE {gse.id}] t={t}: assigned plane {gse.assigned_plane_id} no longer active, releasing GSE")
+                    gse.finish_working(nodes_dict, heuristics, t)
+                    continue
                 print(f"[Plane {plane.id}] t={t}: unloaded cargo delivered to node {plane.cargo_to}")
                 gse.finish_working(nodes_dict, heuristics, t)
             elif gse.status == "working" and gse.work_end_time is None:
                 plane = plane_by_id.get(gse.assigned_plane_id)
                 if plane is None:
-                    raise ValueError(
-                        f"Assigned plane {gse.assigned_plane_id} for GSE {gse.id} is not active."
-                    )
+                    print(f"[GSE {gse.id}] t={t}: assigned plane {gse.assigned_plane_id} no longer active, releasing GSE")
+                    gse.finish_working(nodes_dict, heuristics, t)
+                    continue
                 gse.work_end_time = plane.start_service(gse.assigned_service_type, gse.id, t)
                 print(
                     f"[Plane {plane.id}] t={t}: {gse.assigned_service_type} started by GSE {gse.id}, "
