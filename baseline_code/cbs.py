@@ -6,7 +6,7 @@ Inclusief Spatio-Temporal Node én Edge Reserveringen + Deadlock Breaker.
 from single_agent_planner import simple_single_agent_astar
 
 RESERVATION_HORIZON = 2
-TIME_MARGIN = 2  
+TIME_MARGIN = 1  
 
 def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
     """

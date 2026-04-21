@@ -1,0 +1,10 @@
+============================================================
+BATCH RUN SUMMARY
+Created     : 2026-04-21_12-50-00
+Seeds       : 1
+Workers     : 1
+Batch dir   : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-21_12-50-00
+Results CSV : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-21_12-50-00/csv_shape_check.csv
+------------------------------------------------------------
+seed,gas_mean_tat,electric_mean_tat,n_completed_gas,n_completed_electric,gas_log,electric_log
+0,239.2,99.9,12,16,seed000_gas.log,seed000_electric.log

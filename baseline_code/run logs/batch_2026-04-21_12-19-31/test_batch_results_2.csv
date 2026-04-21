@@ -1,0 +1,3 @@
+seed,tat_conventional,tat_electric,n_completed_conv,n_completed_elec,log_conv,log_elec
+0,223.0,99.9,10,16,seed000_gas.log,seed000_electric.log
+1,87.5,69.4,16,16,seed001_gas.log,seed001_electric.log

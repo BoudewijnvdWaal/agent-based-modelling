@@ -11,10 +11,8 @@ import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 import time as timer
-import pygame as pg
 
 from single_agent_planner import calc_heuristics
-from visualization import map_initialization, map_running
 from GSE import GSE
 from Plane import load_plane_schedule, build_plane_schedule_lookup, spawn_planes
 from Fleet_manager import Fleet_manager
@@ -22,7 +20,9 @@ from auction_system import AuctionSystem
 from cbs import resolve_conflicts  # <-- IMPORTED CBS MODULE
 
 BASE_DIR = Path(__file__).resolve().parent
-LOG_DIR  = Path("/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs")
+PROJECT_ROOT = BASE_DIR.parent
+LOG_DIR  = PROJECT_ROOT / "run logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # =============================================================================
 # SIMULATION PARAMETERS  (pas hier aan)
@@ -31,7 +31,7 @@ nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
 plane_data_file = "Data/Planes.xlsx"
 
-simulation_duration_hours = 10
+simulation_duration_hours = 12
 planner = "Independent"
 
 # Service- en vertrektijden van vliegtuigen, in pseudo-minuten
@@ -40,15 +40,15 @@ loading_duration_minutes = 15
 departure_delay_minutes = 5
 
 # --- [NIEUW] GSE configuratie ---
-GSE_COUNT = 6
+GSE_COUNT = 7
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
-GSE_ELECTRIC = True  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
+GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
                #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
 
 # Visualisatie
 plot_graph         = False
-visualization      = True
+visualization      = False
 real_minutes_per_pseudo_hour = 0.25  # 12 pseudo-hours -> 12 real minutes
 gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
 render_every_n_steps = 1
@@ -199,6 +199,8 @@ def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
 
 
 def render_simulation_frame(map_properties, gse_lst, active_planes, t):
+    from visualization import map_running
+
     current_states = {}
     for gse in gse_lst:
         current_states[gse.id] = {
@@ -360,11 +362,14 @@ print(f"[Init] Oplaadstations gevonden: nodes {charging_node_ids}")
 # SIMULATIEFUNCTIE
 # =============================================================================
 def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_filepath=None,
-                   gse_spawn_config=None):
+                   gse_spawn_config=None, *, enable_visualization=None, pace=True,
+                   show_status=True):
     print(f"\n{'=' * 60}")
     print(f"  Starting {gse_type_label.upper()} simulation")
     print(f"  charge_duration={charge_duration} min  |  base_consumption={base_consumption_rate}%/unit")
     print(f"{'=' * 60}")
+
+    visualize = visualization if enable_visualization is None else bool(enable_visualization)
 
     plane_schedule = load_plane_schedule(
         plane_data_file,
@@ -393,7 +398,9 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
     auction_system = AuctionSystem(gse_lst)
     auctioned_tasks = set()
 
-    if visualization:
+    if visualize:
+        from visualization import map_initialization
+
         map_properties = map_initialization(nodes_dict, edges_dict)
 
     # =========================================================================
@@ -415,7 +422,9 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
 
         if t >= time_end or escape_pressed:
             running = False
-            pg.quit()
+            if visualize:
+                import pygame as pg
+                pg.quit()
             print("Simulation Stopped")
             break
 
@@ -495,7 +504,7 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
                 if gse.goal is not None:
                     charging_load[gse.goal] = charging_load.get(gse.goal, 0) + 1
 
-        should_render_step = visualization and step_count % render_every_n_steps == 0
+        should_render_step = visualize and step_count % render_every_n_steps == 0
         if should_render_step:
             escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
         
@@ -522,9 +531,10 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
                 escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, substep_time)
                 if escape_pressed:
                     break
-                pace_simulation(substep_time, real_seconds_per_pseudo_minute, simulation_start_wall_time)
+                if pace:
+                    pace_simulation(substep_time, real_seconds_per_pseudo_minute, simulation_start_wall_time)
 
-        if not should_render_step:
+        if not should_render_step and pace:
             pace_simulation(t + dt, real_seconds_per_pseudo_minute, simulation_start_wall_time)
 
         gse_by_id = {gse.id: gse for gse in gse_lst}
@@ -579,7 +589,7 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
                     f"completes at t={gse.work_end_time}"
                 )
 
-        if step_count % status_print_interval == 0:
+        if show_status and step_count % status_print_interval == 0:
             _status_table_lines = print_gse_status_table(gse_lst, t, _status_table_lines)
 
         t = t + dt
@@ -592,10 +602,11 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
 # =============================================================================
 # UITVOERING
 # =============================================================================
-if GSE_ELECTRIC:
-    run_simulation(15.0, 0.5, "electric")
-else:
-    shared_log          = LOG_DIR / f"run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_comparison.log"
-    shared_spawn_config = build_random_gse_spawn_config(nodes_dict, GSE_COUNT, seed=GSE_RANDOM_SEED)
-    run_simulation(15.0, 0.5, "electric", log_filepath=shared_log, gse_spawn_config=shared_spawn_config)
-    run_simulation(2.0, 0.25, "gas",      log_filepath=shared_log, gse_spawn_config=shared_spawn_config)
+if __name__ == "__main__":
+    if GSE_ELECTRIC:
+        run_simulation(15.0, 0.5, "electric")
+    else:
+        shared_log          = LOG_DIR / f"run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_comparison.log"
+        shared_spawn_config = build_random_gse_spawn_config(nodes_dict, GSE_COUNT, seed=GSE_RANDOM_SEED)
+        run_simulation(15.0, 0.5, "electric", log_filepath=shared_log, gse_spawn_config=shared_spawn_config)
+        run_simulation(2.0, 0.25, "gas",      log_filepath=shared_log, gse_spawn_config=shared_spawn_config)

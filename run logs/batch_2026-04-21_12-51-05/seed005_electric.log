@@ -1,0 +1,42 @@
+
+============================================================
+SIMULATION RUN LOG
+GSE type   : ELECTRIC
+Date/time  : 2026-04-21 12:51:12
+Duration   : 12 hours (720 min)
+GSE count  : 6  |  speed: 4.0
+GSE params : charge_duration=15 min  |  base_consumption=0.5%/unit
+============================================================
+
+FLIGHT TIMES
+  Flight        Turnaround   Wait unload    Wait load
+  -----------------------------------------------------
+  AF1341           103.0 min        13.0 min       55.0 min
+  AF782            233.0 min         5.0 min      193.0 min
+  BA774            104.0 min         7.0 min       62.0 min
+  EK149            228.0 min         0.0 min      193.0 min
+  EK533            176.0 min         8.0 min      133.0 min
+  IB204             91.0 min        32.0 min       24.0 min
+  IB452         incomplete    incomplete   incomplete
+  KL123         incomplete    incomplete   incomplete
+  KL184         incomplete       178.0 min   incomplete
+  KL642            148.0 min        21.0 min       92.0 min
+  LH412             52.0 min         0.0 min       17.0 min
+  LH997             50.0 min         3.0 min       12.0 min
+  OS374         incomplete       196.0 min   incomplete
+  QF640            231.0 min        68.0 min      128.0 min
+  TK1954           155.0 min        11.0 min      109.0 min
+  U28672           187.0 min         5.0 min      147.0 min
+  -----------------------------------------------------
+  Total (12 completed)      1758.0 min
+  Average          146.5 min
+
+GSE UTILIZATION  (cumulative battery % consumed  |  tasks completed)
+------------------------------------------------------------
+  GSE 1       546.0%  [########################-]  tasks: 5
+  GSE 2       268.0%  [############-------------]  tasks: 2
+  GSE 3       250.0%  [###########--------------]  tasks: 5
+  GSE 4       272.0%  [############-------------]  tasks: 2
+  GSE 5       564.0%  [#########################]  tasks: 4
+  GSE 6       366.0%  [################---------]  tasks: 5
+============================================================
