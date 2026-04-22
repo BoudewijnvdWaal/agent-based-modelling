@@ -43,7 +43,7 @@ departure_delay_minutes = 5
 GSE_COUNT = 7
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
-GSE_ELECTRIC = True  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
+GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
                #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
 
 # Visualisatie
@@ -606,7 +606,4 @@ if __name__ == "__main__":
     if GSE_ELECTRIC:
         run_simulation(15.0, 0.5, "electric")
     else:
-        shared_log          = LOG_DIR / f"run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_comparison.log"
-        shared_spawn_config = build_random_gse_spawn_config(nodes_dict, GSE_COUNT, seed=GSE_RANDOM_SEED)
-        run_simulation(15.0, 0.5, "electric", log_filepath=shared_log, gse_spawn_config=shared_spawn_config)
-        run_simulation(2.0, 0.25, "gas",      log_filepath=shared_log, gse_spawn_config=shared_spawn_config)
+        run_simulation(2.0, 0.25, "gas")

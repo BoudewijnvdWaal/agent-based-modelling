@@ -1,0 +1,116 @@
+============================================================
+BATCH RUN SUMMARY
+Created     : 2026-04-22_19-10-41
+GSE type    : gas
+Seeds       : 100
+Workers     : 7
+Batch dir   : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-22_19-10-41
+Results CSV : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-22_19-10-41/batch_results.csv
+------------------------------------------------------------
+seed,gse_type,mean_tat,n_completed,log_file
+6,gas,54.6,16,seed006_gas.log
+1,gas,54.2,16,seed001_gas.log
+8,gas,56.1,16,seed008_gas.log
+4,gas,54.3,16,seed004_gas.log
+0,gas,56.4,16,seed000_gas.log
+3,gas,54.8,16,seed003_gas.log
+10,gas,54.7,16,seed010_gas.log
+7,gas,54.8,16,seed007_gas.log
+9,gas,53.5,16,seed009_gas.log
+12,gas,55.6,16,seed012_gas.log
+13,gas,54.9,16,seed013_gas.log
+14,gas,55.8,16,seed014_gas.log
+16,gas,56.4,16,seed016_gas.log
+11,gas,55.8,16,seed011_gas.log
+2,gas,54.3,16,seed002_gas.log
+15,gas,55.1,16,seed015_gas.log
+20,gas,54.4,16,seed020_gas.log
+17,gas,55.4,16,seed017_gas.log
+22,gas,53.9,16,seed022_gas.log
+21,gas,54.3,16,seed021_gas.log
+26,gas,54.9,16,seed026_gas.log
+5,gas,55.1,16,seed005_gas.log
+23,gas,55.9,16,seed023_gas.log
+28,gas,56.9,16,seed028_gas.log
+27,gas,54.0,16,seed027_gas.log
+29,gas,54.1,16,seed029_gas.log
+25,gas,54.1,16,seed025_gas.log
+24,gas,54.2,16,seed024_gas.log
+31,gas,55.4,16,seed031_gas.log
+35,gas,54.6,16,seed035_gas.log
+18,gas,55.1,16,seed018_gas.log
+30,gas,54.3,16,seed030_gas.log
+32,gas,56.0,16,seed032_gas.log
+37,gas,56.4,16,seed037_gas.log
+40,gas,56.4,16,seed040_gas.log
+34,gas,55.3,16,seed034_gas.log
+36,gas,54.6,16,seed036_gas.log
+42,gas,54.6,16,seed042_gas.log
+39,gas,55.6,16,seed039_gas.log
+44,gas,55.1,16,seed044_gas.log
+19,gas,54.6,16,seed019_gas.log
+46,gas,55.4,16,seed046_gas.log
+38,gas,56.2,16,seed038_gas.log
+41,gas,56.6,16,seed041_gas.log
+43,gas,57.2,16,seed043_gas.log
+49,gas,55.2,16,seed049_gas.log
+51,gas,55.5,16,seed051_gas.log
+47,gas,55.4,16,seed047_gas.log
+52,gas,54.3,16,seed052_gas.log
+48,gas,54.9,16,seed048_gas.log
+50,gas,55.0,16,seed050_gas.log
+56,gas,55.6,16,seed056_gas.log
+55,gas,56.4,16,seed055_gas.log
+53,gas,54.8,16,seed053_gas.log
+57,gas,54.2,16,seed057_gas.log
+59,gas,55.8,16,seed059_gas.log
+33,gas,56.2,16,seed033_gas.log
+54,gas,54.1,16,seed054_gas.log
+61,gas,56.0,16,seed061_gas.log
+60,gas,54.6,16,seed060_gas.log
+65,gas,56.8,16,seed065_gas.log
+45,gas,55.2,16,seed045_gas.log
+66,gas,55.7,16,seed066_gas.log
+58,gas,55.1,16,seed058_gas.log
+63,gas,54.4,16,seed063_gas.log
+68,gas,55.5,16,seed068_gas.log
+67,gas,55.1,16,seed067_gas.log
+64,gas,56.8,16,seed064_gas.log
+74,gas,56.1,16,seed074_gas.log
+75,gas,57.9,16,seed075_gas.log
+69,gas,56.6,16,seed069_gas.log
+76,gas,55.4,16,seed076_gas.log
+71,gas,54.8,16,seed071_gas.log
+72,gas,54.9,16,seed072_gas.log
+77,gas,54.8,16,seed077_gas.log
+70,gas,56.6,16,seed070_gas.log
+73,gas,54.1,16,seed073_gas.log
+79,gas,53.2,16,seed079_gas.log
+82,gas,55.0,16,seed082_gas.log
+62,gas,54.4,16,seed062_gas.log
+81,gas,57.1,16,seed081_gas.log
+80,gas,57.0,16,seed080_gas.log
+78,gas,54.9,16,seed078_gas.log
+83,gas,54.9,16,seed083_gas.log
+87,gas,54.6,16,seed087_gas.log
+86,gas,54.6,16,seed086_gas.log
+89,gas,53.8,16,seed089_gas.log
+84,gas,55.1,16,seed084_gas.log
+91,gas,55.1,16,seed091_gas.log
+88,gas,54.7,16,seed088_gas.log
+95,gas,55.2,16,seed095_gas.log
+90,gas,55.2,16,seed090_gas.log
+85,gas,54.1,16,seed085_gas.log
+92,gas,53.7,16,seed092_gas.log
+93,gas,55.7,16,seed093_gas.log
+98,gas,54.9,16,seed098_gas.log
+96,gas,54.9,16,seed096_gas.log
+97,gas,54.4,16,seed097_gas.log
+99,gas,54.2,16,seed099_gas.log
+94,gas,57.1,16,seed094_gas.log
+------------------------------------------------------------
+Seeds completed : 100
+Total flights   : 1600
+Overall avg TAT : 55.19 min
+Wall time       : 0:00:03
+============================================================

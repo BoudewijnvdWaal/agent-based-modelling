@@ -1,10 +1,12 @@
 """
-batch_run.py — Paired batch runner: electric vs. conventional GSE.
+batch_run.py — Batch runner: runs N seeds in either electric or gas mode.
+
+The GSE_ELECTRIC flag in run_me.py controls which condition is used.
 
 Usage:
     python batch_run.py [--seeds N] [--output results.csv]
 
-Defaults: 30 seeds, output to batch_results.csv
+Defaults: 5 seeds, output to batch_results.csv
 """
 
 import argparse
@@ -31,7 +33,7 @@ GSE_SUMMARY_CSV = "GSE_summary.csv"
 # =============================================================================
 # BATCH PARAMETERS  (change here)
 # =============================================================================
-N_SEEDS    = 115                  # number of paired runs (seeds 0 … N_SEEDS-1)
+N_SEEDS    = 100                  # number of paired runs (seeds 0 … N_SEEDS-1)
 N_WORKERS  = max(1, os.cpu_count() - 1)  # parallel workers; -1 leaves one core for the OS
 OUTPUT_CSV = "batch_results.csv" # filename inside the batch folder
 # =============================================================================
@@ -152,7 +154,7 @@ def _silence():
 
 
 # =============================================================================
-# WORKER  — runs in a separate process, handles both conditions for one seed
+# WORKER  — runs one seed in the configured GSE mode (electric or gas)
 # =============================================================================
 
 def _run_seed(seed: int, batch_dir_str: str) -> dict:
@@ -161,52 +163,43 @@ def _run_seed(seed: int, batch_dir_str: str) -> dict:
     with _silence():
         import run_me  # imported fresh per worker process
 
-    log_conv = batch_dir / f"seed{seed:03d}_gas.log"
-    log_elec = batch_dir / f"seed{seed:03d}_electric.log"
+    if run_me.GSE_ELECTRIC:
+        charge_duration = 15.0
+        consumption     = 0.5
+        label           = "electric"
+    else:
+        charge_duration = 2.0
+        consumption     = 0.25
+        label           = "gas"
+
+    log_path = batch_dir / f"seed{seed:03d}_{label}.log"
 
     spawn_cfg = run_me.build_random_gse_spawn_config(
         run_me.nodes_dict, run_me.GSE_COUNT, seed=seed
     )
     with _silence():
         run_me.run_simulation(
-            2.0,
-            0.25,
-            "gas",
-            log_filepath=log_conv,
-            gse_spawn_config=spawn_cfg,
-            enable_visualization=False,
-            pace=False,
-            show_status=False,
-        )
-    with _silence():
-        run_me.run_simulation(
-            15.0,
-            0.5,
-            "electric",
-            log_filepath=log_elec,
+            charge_duration,
+            consumption,
+            label,
+            log_filepath=log_path,
             gse_spawn_config=spawn_cfg,
             enable_visualization=False,
             pace=False,
             show_status=False,
         )
 
-    conv = parse_log(log_conv)
-    elec = parse_log(log_elec)
+    parsed = parse_log(log_path)
 
     return {
-        "seed":             seed,
-        "tat_conventional": conv["mean_tat"],
-        "tat_electric":     elec["mean_tat"],
-        "n_completed_conv": conv["n_completed"],
-        "n_completed_elec": elec["n_completed"],
-        "log_conv":         log_conv.name,
-        "log_elec":         log_elec.name,
-        "parameter_rows":   [
-            _parameters_row(seed, log_conv.name, conv),
-            _parameters_row(seed, log_elec.name, elec),
-        ],
-        "plane_rows":       _plane_rows(seed, log_conv.name, conv) + _plane_rows(seed, log_elec.name, elec),
-        "gse_rows":         _gse_rows(seed, log_conv.name, conv) + _gse_rows(seed, log_elec.name, elec),
+        "seed":          seed,
+        "gse_type":      label,
+        "mean_tat":      parsed["mean_tat"],
+        "n_completed":   parsed["n_completed"],
+        "log_file":      log_path.name,
+        "parameter_rows": [_parameters_row(seed, log_path.name, parsed)],
+        "plane_rows":    _plane_rows(seed, log_path.name, parsed),
+        "gse_rows":      _gse_rows(seed, log_path.name, parsed),
     }
 
 
@@ -282,18 +275,20 @@ def _gse_rows(seed: int, log_name: str, parsed: dict) -> list[dict]:
 
 
 def _write_batch_summary_header(summary_log: Path, batch_dir: Path, n_seeds: int,
-                                effective_workers: int, output_csv: Path, batch_ts: str) -> None:
+                                effective_workers: int, output_csv: Path, batch_ts: str,
+                                gse_type: str) -> None:
     summary_log.write_text(
         "\n".join([
             "=" * 60,
             "BATCH RUN SUMMARY",
             f"Created     : {batch_ts}",
+            f"GSE type    : {gse_type}",
             f"Seeds       : {n_seeds}",
             f"Workers     : {effective_workers}",
             f"Batch dir   : {batch_dir}",
             f"Results CSV : {output_csv}",
             "-" * 60,
-            "seed,gas_mean_tat,electric_mean_tat,n_completed_gas,n_completed_electric,gas_log,electric_log",
+            "seed,gse_type,mean_tat,n_completed,log_file",
         ]) + "\n"
     )
 
@@ -302,12 +297,27 @@ def _append_batch_summary_row(summary_log: Path, row: dict) -> None:
     with open(summary_log, "a") as f:
         f.write(
             f"{row['seed']},"
-            f"{row['tat_conventional']},"
-            f"{row['tat_electric']},"
-            f"{row['n_completed_conv']},"
-            f"{row['n_completed_elec']},"
-            f"{row['log_conv']},"
-            f"{row['log_elec']}\n"
+            f"{row['gse_type']},"
+            f"{row['mean_tat']},"
+            f"{row['n_completed']},"
+            f"{row['log_file']}\n"
+        )
+
+
+def _write_batch_summary_footer(summary_log: Path, rows: list[dict], total_wall: str) -> None:
+    valid_tats = [r["mean_tat"] for r in rows if r["mean_tat"] is not None]
+    overall_avg = sum(valid_tats) / len(valid_tats) if valid_tats else float("nan")
+    total_completed = sum(r["n_completed"] for r in rows)
+    with open(summary_log, "a") as f:
+        f.write(
+            "\n".join([
+                "-" * 60,
+                f"Seeds completed : {len(rows)}",
+                f"Total flights   : {total_completed}",
+                f"Overall avg TAT : {overall_avg:.2f} min",
+                f"Wall time       : {total_wall}",
+                "=" * 60,
+            ]) + "\n"
         )
 
 
@@ -316,6 +326,9 @@ def _append_batch_summary_row(summary_log: Path, row: dict) -> None:
 # =============================================================================
 
 def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
+    import run_me as _rm
+    gse_type = "electric" if _rm.GSE_ELECTRIC else "gas"
+
     batch_start = time.monotonic()
     rows        = []
     effective_workers = max(1, min(n_workers, n_seeds))
@@ -328,7 +341,7 @@ def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
     parameters_csv = batch_dir / PARAMETERS_CSV
     planes_summary_csv = batch_dir / PLANES_SUMMARY_CSV
     gse_summary_csv = batch_dir / GSE_SUMMARY_CSV
-    _write_batch_summary_header(summary_log, batch_dir, n_seeds, effective_workers, output_csv, batch_ts)
+    _write_batch_summary_header(summary_log, batch_dir, n_seeds, effective_workers, output_csv, batch_ts, gse_type)
     LATEST_BATCH_FILE.write_text(
         f"{batch_dir}\n"
         f"results_csv={output_csv}\n"
@@ -337,11 +350,12 @@ def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
         f"planes_summary_csv={planes_summary_csv}\n"
         f"gse_summary_csv={gse_summary_csv}\n"
         f"created_at={batch_ts}\n"
+        f"gse_type={gse_type}\n"
         f"seeds={n_seeds}\n"
         f"workers={effective_workers}\n"
     )
 
-    print(f"Batch run: {n_seeds} seeds × 2 conditions  |  {effective_workers} parallel workers")
+    print(f"Batch run: {n_seeds} seeds  |  GSE type: {gse_type}  |  {effective_workers} parallel workers")
     print(f"Output folder: {batch_dir}\n")
 
     with ProcessPoolExecutor(max_workers=effective_workers) as executor:
@@ -352,17 +366,8 @@ def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
 
         for future in as_completed(futures):
             row = future.result()
-            summary_row = {
-                "seed": row["seed"],
-                "tat_conventional": row["tat_conventional"],
-                "tat_electric": row["tat_electric"],
-                "n_completed_conv": row["n_completed_conv"],
-                "n_completed_elec": row["n_completed_elec"],
-                "log_conv": row["log_conv"],
-                "log_elec": row["log_elec"],
-            }
-            seed = summary_row["seed"]
-            rows.append(summary_row)
+            seed = row["seed"]
+            rows.append(row)
 
             done    = len(rows)
             elapsed = time.monotonic() - batch_start
@@ -371,21 +376,24 @@ def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
 
             print(
                 f"  {_bar(done, n_seeds)} {done}/{n_seeds}  "
-                f"seed {seed:>3}  gas={summary_row['tat_conventional']}  elec={summary_row['tat_electric']}  "
+                f"seed {seed:>3}  {gse_type}={row['mean_tat']}  "
                 f"elapsed: {_fmt_duration(elapsed)}  ETA: {_fmt_duration(eta)}"
             )
 
             rows_sorted = sorted(rows, key=lambda r: r["seed"])
+            csv_rows = [{k: r[k] for k in ("seed", "gse_type", "mean_tat", "n_completed", "log_file")}
+                        for r in rows_sorted]
             with open(output_csv, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=list(rows_sorted[0].keys()))
+                writer = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
                 writer.writeheader()
-                writer.writerows(rows_sorted)
-            _append_batch_summary_row(summary_log, summary_row)
+                writer.writerows(csv_rows)
+            _append_batch_summary_row(summary_log, row)
             _append_csv_rows(parameters_csv, row["parameter_rows"])
             _append_csv_rows(planes_summary_csv, row["plane_rows"])
             _append_csv_rows(gse_summary_csv, row["gse_rows"])
 
     total = _fmt_duration(time.monotonic() - batch_start)
+    _write_batch_summary_footer(summary_log, rows, total)
     print(f"\nDone in {total}. Results saved to {output_csv}")
     print(f"Batch summary: {summary_log}")
     print(f"Parameters CSV: {parameters_csv}")

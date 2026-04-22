@@ -28,13 +28,42 @@ LOG_DIR      = PROJECT_ROOT / "run logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(BASE_DIR))
-from batch_run import _run_seed  # reuse the paired-run worker
+from batch_run import parse_log, _silence
+
+
+def _run_paired_seed(seed: int, batch_dir: Path) -> dict:
+    """Run both gas and electric conditions for one seed with the same spawn config."""
+    import run_me
+
+    log_gas  = batch_dir / f"seed{seed:03d}_gas.log"
+    log_elec = batch_dir / f"seed{seed:03d}_electric.log"
+
+    spawn_cfg = run_me.build_random_gse_spawn_config(
+        run_me.nodes_dict, run_me.GSE_COUNT, seed=seed
+    )
+    with _silence():
+        run_me.run_simulation(
+            2.0, 0.25, "gas",
+            log_filepath=log_gas, gse_spawn_config=spawn_cfg,
+            enable_visualization=False, pace=False, show_status=False,
+        )
+    with _silence():
+        run_me.run_simulation(
+            15.0, 0.5, "electric",
+            log_filepath=log_elec, gse_spawn_config=spawn_cfg,
+            enable_visualization=False, pace=False, show_status=False,
+        )
+
+    return {
+        "tat_gas":      parse_log(log_gas)["mean_tat"],
+        "tat_electric": parse_log(log_elec)["mean_tat"],
+    }
 
 # =============================================================================
 # DEFAULT PARAMETERS  (edit here or pass via CLI)
 # =============================================================================
 ALPHA    = 0.05   # significance level  →  z ≈ 1.96
-L        = 25.0    # desired full CI width in minutes (stop when CI < L)
+L        = 5.0    # desired full CI width in minutes (stop when CI < L)
 MIN_RUNS = 30     # practical minimum before checking criterion
 MAX_RUNS = 200    # hard cap to prevent infinite loop
 # =============================================================================
@@ -87,8 +116,8 @@ def find_n_seeds(
     k_valid = 0  # counts only runs with valid TAT output
 
     for seed in range(max_runs):
-        result   = _run_seed(seed, str(batch_dir))
-        tat_gas  = result["tat_conventional"]
+        result   = _run_paired_seed(seed, batch_dir)
+        tat_gas  = result["tat_gas"]
         tat_elec = result["tat_electric"]
 
         if tat_gas is None or tat_elec is None:
@@ -175,14 +204,14 @@ def plot_results(result: dict, save_path: Path = None) -> None:
 
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(9, 7), sharex=True,
-        gridspec_kw={"hspace": 0.35}
+        constrained_layout=True,
     )
 
     fig.suptitle(
         "Sequential Stopping Rule — Number of Simulation Runs Required\n"
         f"Output: paired TAT difference  (gas − electric)  |  "
         f"α = {alpha},  l = {l} min,  n* = {n}",
-        fontsize=11, fontweight="bold", y=0.98,
+        fontsize=11, fontweight="bold",
     )
 
     # ── Panel 1: running mean + CI ──────────────────────────────────────────
@@ -233,8 +262,6 @@ def plot_results(result: dict, save_path: Path = None) -> None:
             xytext=(n + 0.5, ax.get_ylim()[0]),
             fontsize=9, color="#C0392B", va="bottom",
         )
-
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if save_path:
         plt.savefig(save_path, dpi=200, bbox_inches="tight")

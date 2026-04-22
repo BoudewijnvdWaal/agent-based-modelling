@@ -1,3 +1,0 @@
-seed,gse_type,log_file,date_time,duration_hours,duration_min,gse_count,gse_speed,charge_duration_min,base_consumption_rate_pct_per_unit,recharge_rate_pct_per_min
-0,gas,seed000_gas.log,2026-04-21 12:50:04,12.0,720.0,6,4.0,2.0,0.25,50.0
-0,electric,seed000_electric.log,2026-04-21 12:50:05,12.0,720.0,6,4.0,15.0,0.5,6.666666666666667

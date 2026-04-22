@@ -1,0 +1,43 @@
+
+============================================================
+SIMULATION RUN LOG
+GSE type   : GAS
+Date/time  : 2026-04-22 18:25:50
+Duration   : 12 hours (720 min)
+GSE count  : 7  |  speed: 4.0
+GSE params : charge_duration=2 min  |  base_consumption=0.25%/unit
+============================================================
+
+FLIGHT TIMES
+  Flight        Turnaround   Wait unload    Wait load
+  -----------------------------------------------------
+  AF1341        incomplete       233.0 min      192.0 min
+  AF782         incomplete         0.0 min   incomplete
+  BA774         incomplete        72.0 min   incomplete
+  EK149         incomplete    incomplete   incomplete
+  EK533            443.0 min       152.0 min      256.0 min
+  IB204            260.0 min       110.0 min      115.0 min
+  IB452         incomplete    incomplete   incomplete
+  KL123         incomplete    incomplete   incomplete
+  KL184         incomplete    incomplete   incomplete
+  KL642         incomplete        92.0 min   incomplete
+  LH412            474.0 min         1.0 min      438.0 min
+  LH997         incomplete         2.0 min   incomplete
+  OS374         incomplete    incomplete   incomplete
+  QF640         incomplete    incomplete   incomplete
+  TK1954        incomplete       294.0 min      116.0 min
+  U28672           203.0 min         0.0 min      168.0 min
+  -----------------------------------------------------
+  Total (4 completed)      1380.0 min
+  Average          345.0 min
+
+GSE UTILIZATION  (cumulative battery % consumed  |  tasks completed)
+------------------------------------------------------------
+  GSE 1       569.0%  [#######################--]  tasks: 1
+  GSE 2       601.0%  [########################-]  tasks: 0
+  GSE 3       611.0%  [#########################]  tasks: 1
+  GSE 4       623.0%  [#########################]  tasks: 0
+  GSE 5       622.0%  [#########################]  tasks: 1
+  GSE 6       576.0%  [#######################--]  tasks: 2
+  GSE 7       607.0%  [########################-]  tasks: 1
+============================================================
