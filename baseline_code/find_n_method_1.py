@@ -276,7 +276,7 @@ def plot_results(result: dict, save_path: Path = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Find the minimum number of simulation runs via Approach 1 sequential stopping."
+        description="Find the minimum number of simulation runs via sequential stopping."
     )
     parser.add_argument("--alpha",    type=float, default=ALPHA,
                         help=f"Significance level (default: {ALPHA})")

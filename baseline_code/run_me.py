@@ -29,7 +29,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # =============================================================================
 nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
-plane_data_file = "Data/Planes.xlsx"
+plane_data_file = "Data/airport_schedule_24h.xlsx"
 
 simulation_duration_hours = 12
 
@@ -39,16 +39,20 @@ loading_duration_minutes = 15
 departure_delay_minutes = 5
 
 # --- [NIEUW] GSE configuratie ---
-GSE_COUNT = 7
+GSE_COUNT = 8
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
 GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
                #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
 
+# Auction wegingen (genormaliseerde bid-componenten)
+AUCTION_ALPHA = 0.7
+AUCTION_BETA = 0.3
+
 # Visualisatie
 plot_graph         = False
 visualization      = True
-real_minutes_per_pseudo_hour = 0.25  # 12 pseudo-hours -> 12 real minutes
+real_minutes_per_pseudo_hour = 0.1  # 12 pseudo-hours -> 12 real minutes
 gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
 render_every_n_steps = 1
 
@@ -333,6 +337,12 @@ def print_gse_status_table(gse_lst, t, prev_line_count=0):
 nodes_dict, edges_dict = import_layout(nodes_file, edges_file)
 graph      = create_graph(nodes_dict, edges_dict, plot_graph)
 heuristics = calc_heuristics(graph, nodes_dict)
+MAX_SHORTEST_PATH_DISTANCE = max(
+    (distance for distances in heuristics.values() for distance in distances.values()),
+    default=1.0,
+)
+if MAX_SHORTEST_PATH_DISTANCE <= 0:
+    MAX_SHORTEST_PATH_DISTANCE = 1.0
 
 charging_node_ids = [nid for nid, props in nodes_dict.items() if props["type"] == "charging"]
 if not charging_node_ids:
@@ -377,7 +387,17 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
     print(f"[Init] {len(gse_lst)} {gse_type_label} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
 
     fleet_manager  = Fleet_manager(nodes_dict)
-    auction_system = AuctionSystem(gse_lst)
+    auction_system = AuctionSystem(
+        gse_lst,
+        alpha=AUCTION_ALPHA,
+        beta=AUCTION_BETA,
+        max_shortest_path_distance=MAX_SHORTEST_PATH_DISTANCE,
+    )
+    print(
+        "[Init] Auction weights: "
+        f"alpha={AUCTION_ALPHA:.3f}, beta={AUCTION_BETA:.3f}, "
+        f"d_max={MAX_SHORTEST_PATH_DISTANCE:.3f}"
+    )
     auctioned_tasks = set()
 
     if visualize:

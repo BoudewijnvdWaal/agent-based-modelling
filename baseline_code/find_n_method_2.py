@@ -233,7 +233,7 @@ def plot_results(result: dict, save_path: Path = None) -> None:
                              constrained_layout=True)
 
     fig.suptitle(
-        "Approach 2 — Coefficient of Variation Stabilization\n"
+        "Coefficient of Variation Stabilization\n"
         f"Stabilization: window = {window} runs, ε = {eps*100:.0f}%  |  "
         f"Recommended N* = {n_rec}",
         fontsize=11, fontweight="bold",
@@ -283,7 +283,7 @@ def plot_results(result: dict, save_path: Path = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Find minimum simulation runs via CV stabilization (Approach 2)."
+        description="Find minimum simulation runs via CV stabilization."
     )
     parser.add_argument("--window",   type=int,   default=WINDOW,
                         help=f"Stabilization window in runs (default: {WINDOW})")
