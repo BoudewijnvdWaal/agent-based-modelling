@@ -161,7 +161,15 @@ class GSE(object):
     # Veiling (Auction)
     # -------------------------------------------------------------------------
 
-    def calculate_bid(self, gate_node_id, heuristics, second_node_id=None):
+    def calculate_bid(
+        self,
+        gate_node_id,
+        heuristics,
+        second_node_id=None,
+        alpha=1.0,
+        beta=1.0,
+        max_shortest_path_distance=1.0,
+    ):
         """
         Berekent een bod voor een taak bij gate_node_id.
         Lagere waarde = beter bod.
@@ -199,10 +207,12 @@ class GSE(object):
         if energy_needed > self.soc:
             return float('inf')
 
-        # Straf voor lage accu zodat vollere GSEs voorrang krijgen bij gelijke afstand
-        battery_penalty = (100.0 - self.soc) * 0.2
+        # Normaliseer beide componenten en combineer met instelbare gewichten.
+        # afstand in [0, 1+] via vaste schaal d_max; SoC-penalty in [0, 1].
+        distance_norm = distance / max(max_shortest_path_distance, 1e-9)
+        soc_penalty_norm = (100.0 - self.soc) / 100.0
 
-        bid = distance + battery_penalty
+        bid = alpha * distance_norm + beta * soc_penalty_norm
         return bid
 
     # -------------------------------------------------------------------------
