@@ -31,7 +31,7 @@ nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
 plane_data_file = "Data/airport_schedule_24h.xlsx"
 
-simulation_duration_hours = 12
+simulation_duration_hours = 24
 
 # Service- en vertrektijden van vliegtuigen, in pseudo-minuten
 unloading_duration_minutes = 15
@@ -42,8 +42,8 @@ departure_delay_minutes = 5
 GSE_COUNT = 8
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
-GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
-               #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
+GSE_ELECTRIC = True  # True = elektrisch (charge_duration=60 min, consumption=0.83%/unit)
+               #       False = verbrandingsmotor (charge_duration=10 min, consumption=0.14%/unit)
 
 # Auction wegingen (genormaliseerde bid-componenten)
 AUCTION_ALPHA = 0.7
@@ -606,6 +606,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
 # =============================================================================
 if __name__ == "__main__":
     if GSE_ELECTRIC:
-        run_simulation(15.0, 0.5, "electric")
+        run_simulation(60.0, 0.83, "electric")
     else:
-        run_simulation(2.0, 0.25, "gas")
+        run_simulation(10.0, 0.14, "gas")
