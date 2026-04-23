@@ -29,7 +29,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # =============================================================================
 nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
-plane_data_file = "Data/Planes.xlsx"
+plane_data_file = "Data/airport_schedule_24h.xlsx"
 
 simulation_duration_hours = 12
 
@@ -39,7 +39,7 @@ loading_duration_minutes = 15
 departure_delay_minutes = 5
 
 # --- [NIEUW] GSE configuratie ---
-GSE_COUNT = 7
+GSE_COUNT = 15
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
 GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
@@ -48,7 +48,7 @@ GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0
 # Visualisatie
 plot_graph         = False
 visualization      = True
-real_minutes_per_pseudo_hour = 0.25  # 12 pseudo-hours -> 12 real minutes
+real_minutes_per_pseudo_hour = 0.1  # 12 pseudo-hours -> 12 real minutes
 gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
 render_every_n_steps = 1
 
