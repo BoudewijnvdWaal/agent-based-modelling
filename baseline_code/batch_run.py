@@ -197,7 +197,15 @@ def _run_seed(seed: int, batch_dir_str: str) -> dict:
         "mean_tat":      parsed["mean_tat"],
         "n_completed":   parsed["n_completed"],
         "log_file":      log_path.name,
-        "parameter_rows": [_parameters_row(seed, log_path.name, parsed)],
+        "parameter_rows": [
+            _parameters_row(
+                seed,
+                log_path.name,
+                parsed,
+                auction_alpha=float(run_me.AUCTION_ALPHA),
+                auction_beta=float(run_me.AUCTION_BETA),
+            )
+        ],
         "plane_rows":    _plane_rows(seed, log_path.name, parsed),
         "gse_rows":      _gse_rows(seed, log_path.name, parsed),
     }
@@ -228,7 +236,13 @@ def _append_csv_rows(csv_path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def _parameters_row(seed: int, log_name: str, parsed: dict) -> dict:
+def _parameters_row(
+    seed: int,
+    log_name: str,
+    parsed: dict,
+    auction_alpha: float,
+    auction_beta: float,
+) -> dict:
     return {
         "seed": seed,
         "gse_type": parsed["gse_type"],
@@ -241,6 +255,8 @@ def _parameters_row(seed: int, log_name: str, parsed: dict) -> dict:
         "charge_duration_min": parsed["charge_duration_min"],
         "base_consumption_rate_pct_per_unit": parsed["base_consumption_rate_pct_per_unit"],
         "recharge_rate_pct_per_min": parsed["recharge_rate_pct_per_min"],
+        "auction_alpha": auction_alpha,
+        "auction_beta": auction_beta,
     }
 
 

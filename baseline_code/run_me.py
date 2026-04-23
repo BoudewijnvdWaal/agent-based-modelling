@@ -39,15 +39,15 @@ loading_duration_minutes = 15
 departure_delay_minutes = 5
 
 # --- [NIEUW] GSE configuratie ---
-GSE_COUNT = 15
+GSE_COUNT = 8
 GSE_RANDOM_SEED = None
 GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
 GSE_ELECTRIC = False  # True = elektrisch (charge_duration=15 min, consumption=0.5%/unit)
                #       False = verbrandingsmotor (charge_duration=2 min, consumption=0.25%/unit)
 
 # Auction wegingen (genormaliseerde bid-componenten)
-AUCTION_ALPHA = 1.0
-AUCTION_BETA = 1.0
+AUCTION_ALPHA = 0.7
+AUCTION_BETA = 0.3
 
 # Visualisatie
 plot_graph         = False
