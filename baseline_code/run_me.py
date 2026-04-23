@@ -32,7 +32,6 @@ edges_file = "Data/edges_EHAM.xlsx"
 plane_data_file = "Data/Planes.xlsx"
 
 simulation_duration_hours = 12
-planner = "Independent"
 
 # Service- en vertrektijden van vliegtuigen, in pseudo-minuten
 unloading_duration_minutes = 15
@@ -62,10 +61,6 @@ status_print_interval = 10  # zet op 1 voor elke stap, hoger voor minder output
 # =============================================================================
 
 def import_layout(nodes_file, edges_file):
-    gates_xy      = []
-    cargoep_xy    = []
-    chargingrr_xy = []
-
     def resolve_path(path_like):
         path = Path(path_like).expanduser()
         candidates = [path]
@@ -100,19 +95,6 @@ def import_layout(nodes_file, edges_file):
         node_id = row["id"]
         nodes_dict[node_id] = node_properties
 
-        if row["type"] == "cargo":
-            cargoep_xy.append((row["x_pos"], row["y_pos"]))
-        elif row["type"] == "charging":
-            chargingrr_xy.append((row["x_pos"], row["y_pos"]))
-        elif row["type"] == "gate":
-            gates_xy.append((row["x_pos"], row["y_pos"]))
-
-    start_and_goal_locations = {
-        "gates":   gates_xy,
-        "dep_rwy": cargoep_xy,
-        "arr_rwy": chargingrr_xy
-    }
-
     edges_dict = {}
     for i, row in df_edges.iterrows():
         edge_id       = (row["from"], row["to"])
@@ -132,7 +114,7 @@ def import_layout(nodes_file, edges_file):
     for edge in edges_dict:
         nodes_dict[edge[0]]["neighbors"].add(edge[1])
 
-    return nodes_dict, edges_dict, start_and_goal_locations
+    return nodes_dict, edges_dict
 
 
 def create_graph(nodes_dict, edges_dict, plot_graph=True):
@@ -348,7 +330,7 @@ def print_gse_status_table(gse_lst, t, prev_line_count=0):
 # =============================================================================
 # INITIALISATIE 
 # =============================================================================
-nodes_dict, edges_dict, start_and_goal_locations = import_layout(nodes_file, edges_file)
+nodes_dict, edges_dict = import_layout(nodes_file, edges_file)
 graph      = create_graph(nodes_dict, edges_dict, plot_graph)
 heuristics = calc_heuristics(graph, nodes_dict)
 

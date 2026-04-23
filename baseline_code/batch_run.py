@@ -33,7 +33,7 @@ GSE_SUMMARY_CSV = "GSE_summary.csv"
 # =============================================================================
 # BATCH PARAMETERS  (change here)
 # =============================================================================
-N_SEEDS    = 100                  # number of paired runs (seeds 0 … N_SEEDS-1)
+N_SEEDS    = 10                  # number of paired runs (seeds 0 … N_SEEDS-1)
 N_WORKERS  = max(1, os.cpu_count() - 1)  # parallel workers; -1 leaves one core for the OS
 OUTPUT_CSV = "batch_results.csv" # filename inside the batch folder
 # =============================================================================

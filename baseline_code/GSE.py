@@ -65,7 +65,6 @@ class GSE(object):
         self.path_to_goal = []   # lijst van (node_id, tijdstip) tuples
         self.from_to      = [0, 0]
         self.heading      = 0
-        self.last_node    = None
         self.waiting      = False
 
         self.set_speed(speed)
@@ -284,35 +283,6 @@ class GSE(object):
                 f"Unknown service type '{self.assigned_service_type}' for plane {plane.id}."
             )
 
-    def plan_to_gate(self, gate_node_id, nodes_dict, heuristics, t, plane_id=None, service_type=None):
-        """
-        Plant een pad van de huidige positie naar de opgegeven gate.
-        Wordt aangeroepen nadat de auction deze GSE een taak heeft toegewezen.
-        INPUT:
-            - gate_node_id : [int] doelgate
-            - nodes_dict   : [dict]
-            - heuristics   : [dict]
-            - t            : [float] huidig tijdstip
-        """
-        self.assigned_plane_id = plane_id
-        self.assigned_service_type = service_type
-        self.plan_to_node(
-            gate_node_id,
-            nodes_dict,
-            heuristics,
-            t,
-            stage="service_to_plane",
-            label=f"gate {gate_node_id}",
-        )
-
-    def plan_independent(self, nodes_dict, edges_dict, heuristics, t):
-        """
-        Compatibiliteitsmethode voor de bestaande independent planner.
-        Plant een pad van self.start naar self.goal (beide moeten al ingesteld zijn).
-        """
-        if self.status == "taxiing":
-            self._plan_path(nodes_dict, heuristics, t, label=f"goal {self.goal}")
-
     # -------------------------------------------------------------------------
     # Beweging
     # -------------------------------------------------------------------------
@@ -396,7 +366,6 @@ class GSE(object):
 
         self.path_to_goal = self.path_to_goal[1:]
         new_next_id       = self.path_to_goal[0][0]
-        self.last_node    = self.from_to[0]
         self.from_to      = [self.current_node, new_next_id]
 
     def _on_goal_reached(self, t):

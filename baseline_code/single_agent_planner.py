@@ -30,6 +30,8 @@ def calc_heuristics(graph, nodes_dict):
         heuristics[node_id] = dict(lengths)
     return heuristics
 
+
+
 def heuristicFinder(graph, start_node, goal_node):
     """
     Finds exact distance between start_node and goal_node using the NetworkX graph.
@@ -48,6 +50,7 @@ def heuristicFinder(graph, start_node, goal_node):
         path_length = False
         raise Exception('Heuristic cannot be calculated: No connection between', start_node, "and", goal_node)
     return path, path_length
+
 
 
 def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time_start, forbidden_nodes=None):

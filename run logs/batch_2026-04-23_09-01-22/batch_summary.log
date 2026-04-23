@@ -1,0 +1,26 @@
+============================================================
+BATCH RUN SUMMARY
+Created     : 2026-04-23_09-01-22
+GSE type    : gas
+Seeds       : 10
+Workers     : 7
+Batch dir   : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_09-01-22
+Results CSV : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_09-01-22/batch_results.csv
+------------------------------------------------------------
+seed,gse_type,mean_tat,n_completed,log_file
+4,gas,54.3,16,seed004_gas.log
+6,gas,54.6,16,seed006_gas.log
+1,gas,54.2,16,seed001_gas.log
+8,gas,56.1,16,seed008_gas.log
+0,gas,56.4,16,seed000_gas.log
+3,gas,54.8,16,seed003_gas.log
+7,gas,54.8,16,seed007_gas.log
+9,gas,53.5,16,seed009_gas.log
+2,gas,54.3,16,seed002_gas.log
+5,gas,55.1,16,seed005_gas.log
+------------------------------------------------------------
+Seeds completed : 10
+Total flights   : 160
+Overall avg TAT : 54.81 min
+Wall time       : 0:00:02
+============================================================
