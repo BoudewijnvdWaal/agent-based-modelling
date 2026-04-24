@@ -1,4 +1,5 @@
 import os
+import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,90 +7,114 @@ import seaborn as sns
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# Importeer functies uit je bestaande bestanden
-# Zorg dat deze bestanden in dezelfde map staan
+# =============================================================================
+# PADEN EN IMPORTS
+# =============================================================================
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent
+baseline_path = current_dir.parent / "baseline_code"
+
+if str(baseline_path) not in sys.path:
+    sys.path.insert(0, str(baseline_path))
+
 try:
     import run_me
-    from batch_run import _run_seed, _silence
-except ImportError:
-    print("Fout: Kan run_me.py of batch_run.py niet vinden. Zorg dat ze in dezelfde map staan.")
-    exit()
+    from batch_run import _silence
+    print(f"Systeem: Modules succesvol geladen uit {baseline_path}")
+except ImportError as e:
+    print(f"FOUT: Kan baseline_code niet laden.\nDetails: {e}")
+    sys.exit(1)
 
 # =============================================================================
 # CONFIGURATIE
 # =============================================================================
 VALUES = [0.2, 0.4, 0.6, 0.8, 1.0]
-N_SEEDS_PER_CELL = 5  # Aantal seeds per combinatie voor een stabiel gemiddelde
+N_SEEDS_PER_CELL = 114
 N_WORKERS = max(1, os.cpu_count() - 1)
 
-BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = BASE_DIR / "sensitivity_analysis"
+# Map voor eventuele plots
+OUTPUT_DIR = current_dir / "sensitivity_outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 def run_single_combination(alpha, beta):
-    """Draait een mini-batch voor één specifieke alpha-beta combinatie."""
-    # Tijdelijk de globale waarden in run_me aanpassen
-    run_me.AUCTION_ALPHA = alpha
-    run_me.AUCTION_BETA = beta
+    """Draait de simulatie en pakt DIRECT de return value."""
+    # Instellingen overnemen uit run_me
+    label = "electric" if run_me.GSE_ELECTRIC else "gas"
+    charge_dur = 60.0 if run_me.GSE_ELECTRIC else 10.0
+    cons_rate = 0.83 if run_me.GSE_ELECTRIC else 0.14
     
     tats = []
-    # We draaien een klein aantal seeds per cel om een gemiddelde te krijgen
     for seed in range(N_SEEDS_PER_CELL):
-        # We gebruiken de bestaande worker uit batch_run
-        # De batch_dir is hier een tijdelijke map binnen de output
-        result = _run_seed(seed, str(OUTPUT_DIR))
-        if result["mean_tat"] is not None:
-            tats.append(result["mean_tat"])
+        spawn_cfg = run_me.build_random_gse_spawn_config(
+            run_me.nodes_dict, run_me.GSE_COUNT, seed=seed
+        )
+        
+        try:
+            with _silence():
+                # We vangen de return dictionary direct op!
+                result = run_me.run_simulation(
+                    gse_count=run_me.GSE_COUNT,
+                    gse_speed=run_me.GSE_SPEED,
+                    auction_alpha=alpha,
+                    auction_beta=beta,
+                    charge_duration=charge_dur,
+                    base_consumption_rate=cons_rate,
+                    gse_type_label=label,
+                    simulation_duration_hours=run_me.simulation_duration_hours,
+                    log_filepath=None, # Geen log nodig, we hebben de data al
+                    gse_spawn_config=spawn_cfg,
+                    enable_visualization=False,
+                    pace=False,
+                    show_status=False
+                )
             
+            if result and result['mean_tat'] is not None:
+                tats.append(result['mean_tat'])
+        except Exception as e:
+            # Print error alleen als het echt misgaat
+            print(f"Fout bij a={alpha}, b={beta}: {e}")
+
     avg_tat = np.mean(tats) if tats else np.nan
     return alpha, beta, avg_tat
 
 # =============================================================================
-# UITVOERING
+# HOOFDPROGRAMMA
 # =============================================================================
 if __name__ == "__main__":
-    print(f"Start Sensitivity Analysis op Alpha en Beta...")
-    print(f"Combinaties: {len(VALUES)}x{len(VALUES)} | Seeds per cel: {N_SEEDS_PER_CELL}")
-    
+    print(f"--- Sensitiviteitsanalyse Gestart ---")
+    print(f"Dit gaat ongeveer {len(VALUES)**2} combinaties draaien...")
+
     results_list = []
     combinations = [(a, b) for a in VALUES for b in VALUES]
     
-    # We draaien de combinaties parallel
     with ProcessPoolExecutor(max_workers=N_WORKERS) as executor:
         futures = {executor.submit(run_single_combination, a, b): (a, b) for a, b in combinations}
         
-        completed = 0
-        for future in as_completed(futures):
+        for i, future in enumerate(as_completed(futures), 1):
             alpha, beta, avg_tat = future.result()
             results_list.append({"Alpha": alpha, "Beta": beta, "Avg_TAT": avg_tat})
-            completed += 1
-            print(f"Voortgang: {completed}/{len(combinations)} combinaties klaar (Alpha: {alpha}, Beta: {beta})")
+            
+            res_display = f"{avg_tat:.2f} min" if not np.isnan(avg_tat) else "FAILED"
+            print(f"[{i:2d}/25] Alpha={alpha}, Beta={beta} -> Gem. TAT: {res_display}")
 
-    # Data omzetten naar DataFrame
+    # DataFrame maken
     df = pd.DataFrame(results_list)
-    
-    # Pivot maken voor de heatmap
-    heatmap_data = df.pivot(index="Alpha", columns="Beta", values="Avg_TAT")
-    
-    # Sorteer index en kolommen zodat 0.2 links/onder staat en 1.0 rechts/boven
-    heatmap_data = heatmap_data.sort_index(ascending=False) # Alpha op Y-as
-    heatmap_data = heatmap_data.sort_index(axis=1, ascending=True) # Beta op X-as
-
-    # =============================================================================
-    # PLOTTING
-    # =============================================================================
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(heatmap_data, annot=True, fmt=".2f", cmap="YlGnBu", 
-                cbar_kws={'label': 'Gemiddelde Turnaround Time (min)'})
-    
-    plt.title(f"Sensitivity Analysis: Alpha vs Beta\n(Gemiddelde over {N_SEEDS_PER_CELL} seeds per cel)")
-    plt.xlabel("Beta (Gewicht op Afstand)")
-    plt.ylabel("Alpha (Gewicht op Urgentie/Tijd)")
-    
-    # Opslaan
-    plot_path = OUTPUT_DIR / "heatmap_alpha_beta.png"
-    plt.savefig(plot_path)
     df.to_csv(OUTPUT_DIR / "sensitivity_results.csv", index=False)
-    
-    print(f"\nKlaar! Heatmap opgeslagen als: {plot_path}")
-    plt.show()
+
+    # Heatmap genereren
+    if not df['Avg_TAT'].isnull().all():
+        plt.figure(figsize=(10, 8))
+        pivot_table = df.pivot(index="Alpha", columns="Beta", values="Avg_TAT")
+        pivot_table = pivot_table.sort_index(ascending=False) # Hoogste Alpha boven
+        
+        sns.heatmap(pivot_table, annot=True, fmt=".2f", cmap="RdYlGn_r") # Rood is hoog (slecht), groen is laag (goed)
+        plt.title("Gevoeligheidsanalyse: Effect van Alpha & Beta op TAT")
+        plt.xlabel("Beta (Gewicht op Afstand)")
+        plt.ylabel("Alpha (Gewicht op Tijd)")
+        
+        plot_path = OUTPUT_DIR / "alpha_beta_heatmap.png"
+        plt.savefig(plot_path)
+        print(f"\nSucces! Heatmap opgeslagen als: {plot_path}")
+        plt.show()
+    else:
+        print("\nFOUT: Geen data kunnen verzamelen voor de heatmap.")
