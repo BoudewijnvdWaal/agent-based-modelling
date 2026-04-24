@@ -353,7 +353,7 @@ print(f"[Init] Oplaadstations gevonden: nodes {charging_node_ids}")
 # =============================================================================
 # SIMULATIEFUNCTIE
 # =============================================================================
-def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_filepath=None,
+def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_duration, base_consumption_rate, gse_type_label, simulation_duration_hours=24, log_filepath=None,
                    gse_spawn_config=None, *, enable_visualization=None, pace=True,
                    show_status=True):
     print(f"\n{'=' * 60}")
@@ -375,27 +375,27 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
     active_planes = []
 
     if gse_spawn_config is None:
-        gse_spawn_config = build_random_gse_spawn_config(nodes_dict, GSE_COUNT, seed=GSE_RANDOM_SEED)
+        gse_spawn_config = build_random_gse_spawn_config(nodes_dict, gse_count, seed=GSE_RANDOM_SEED)
     gse_lst = []
     for gse_id, start_node in gse_spawn_config:
         gse = GSE(gse_id=gse_id, start_node=start_node,
-                  nodes_dict=nodes_dict, charging_nodes=charging_node_ids, speed=GSE_SPEED)
+                  nodes_dict=nodes_dict, charging_nodes=charging_node_ids, speed=gse_speed)
         gse.charge_duration       = charge_duration
         gse.base_consumption_rate = base_consumption_rate
-        gse.set_speed(GSE_SPEED)
+        gse.set_speed(gse_speed)
         gse_lst.append(gse)
     print(f"[Init] {len(gse_lst)} {gse_type_label} GSEs aangemaakt met spawn nodes: {gse_spawn_config}")
 
     fleet_manager  = Fleet_manager(nodes_dict)
     auction_system = AuctionSystem(
         gse_lst,
-        alpha=AUCTION_ALPHA,
-        beta=AUCTION_BETA,
+        alpha=auction_alpha,
+        beta=auction_beta,
         max_shortest_path_distance=MAX_SHORTEST_PATH_DISTANCE,
     )
     print(
         "[Init] Auction weights: "
-        f"alpha={AUCTION_ALPHA:.3f}, beta={AUCTION_BETA:.3f}, "
+        f"alpha={auction_alpha:.3f}, beta={auction_beta:.3f}, "
         f"d_max={MAX_SHORTEST_PATH_DISTANCE:.3f}"
     )
     auctioned_tasks = set()
@@ -597,8 +597,23 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
         t = t + dt
         step_count += 1
 
-    write_run_log(LOG_DIR, gse_lst, plane_schedule, simulation_duration_hours, GSE_SPEED,
-                  gse_type_label, filepath=log_filepath)
+    # Collect metrics
+    completed_planes = [p for p in plane_schedule if hasattr(p, 'departed_time') and p.departed_time is not None]
+    n_completed = len(completed_planes)
+    tat_values = [p.turnaround_time for p in completed_planes]
+    mean_tat = sum(tat_values) / n_completed if n_completed > 0 else None
+    gse_metrics = [{'id': gse.id, 'tasks_completed': gse.completed_tasks, 'total_energy_consumed_pct': gse.total_energy_consumed} for gse in gse_lst]
+    total_energy_used = sum(gse.total_energy_consumed for gse in gse_lst)
+    avg_tasks_per_gse = sum(gse.completed_tasks for gse in gse_lst) / len(gse_lst) if gse_lst else 0
+
+    return {
+        'mean_tat': mean_tat,
+        'n_completed': n_completed,
+        'total_energy_used': total_energy_used,
+        'avg_tasks_per_gse': avg_tasks_per_gse,
+        'gse_metrics': gse_metrics,
+        'tat_values': tat_values
+    }
 
 
 # =============================================================================
@@ -606,6 +621,6 @@ def run_simulation(charge_duration, base_consumption_rate, gse_type_label, log_f
 # =============================================================================
 if __name__ == "__main__":
     if GSE_ELECTRIC:
-        run_simulation(60.0, 0.83, "electric")
+        run_simulation(GSE_COUNT, GSE_SPEED, AUCTION_ALPHA, AUCTION_BETA, 60.0, 0.83, "electric")
     else:
-        run_simulation(10.0, 0.14, "gas")
+        run_simulation(GSE_COUNT, GSE_SPEED, AUCTION_ALPHA, AUCTION_BETA, 10.0, 0.14, "gas")

@@ -1,0 +1,95 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+# Importeer functies uit je bestaande bestanden
+# Zorg dat deze bestanden in dezelfde map staan
+try:
+    import run_me
+    from batch_run import _run_seed, _silence
+except ImportError:
+    print("Fout: Kan run_me.py of batch_run.py niet vinden. Zorg dat ze in dezelfde map staan.")
+    exit()
+
+# =============================================================================
+# CONFIGURATIE
+# =============================================================================
+VALUES = [0.2, 0.4, 0.6, 0.8, 1.0]
+N_SEEDS_PER_CELL = 5  # Aantal seeds per combinatie voor een stabiel gemiddelde
+N_WORKERS = max(1, os.cpu_count() - 1)
+
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "sensitivity_analysis"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+def run_single_combination(alpha, beta):
+    """Draait een mini-batch voor één specifieke alpha-beta combinatie."""
+    # Tijdelijk de globale waarden in run_me aanpassen
+    run_me.AUCTION_ALPHA = alpha
+    run_me.AUCTION_BETA = beta
+    
+    tats = []
+    # We draaien een klein aantal seeds per cel om een gemiddelde te krijgen
+    for seed in range(N_SEEDS_PER_CELL):
+        # We gebruiken de bestaande worker uit batch_run
+        # De batch_dir is hier een tijdelijke map binnen de output
+        result = _run_seed(seed, str(OUTPUT_DIR))
+        if result["mean_tat"] is not None:
+            tats.append(result["mean_tat"])
+            
+    avg_tat = np.mean(tats) if tats else np.nan
+    return alpha, beta, avg_tat
+
+# =============================================================================
+# UITVOERING
+# =============================================================================
+if __name__ == "__main__":
+    print(f"Start Sensitivity Analysis op Alpha en Beta...")
+    print(f"Combinaties: {len(VALUES)}x{len(VALUES)} | Seeds per cel: {N_SEEDS_PER_CELL}")
+    
+    results_list = []
+    combinations = [(a, b) for a in VALUES for b in VALUES]
+    
+    # We draaien de combinaties parallel
+    with ProcessPoolExecutor(max_workers=N_WORKERS) as executor:
+        futures = {executor.submit(run_single_combination, a, b): (a, b) for a, b in combinations}
+        
+        completed = 0
+        for future in as_completed(futures):
+            alpha, beta, avg_tat = future.result()
+            results_list.append({"Alpha": alpha, "Beta": beta, "Avg_TAT": avg_tat})
+            completed += 1
+            print(f"Voortgang: {completed}/{len(combinations)} combinaties klaar (Alpha: {alpha}, Beta: {beta})")
+
+    # Data omzetten naar DataFrame
+    df = pd.DataFrame(results_list)
+    
+    # Pivot maken voor de heatmap
+    heatmap_data = df.pivot(index="Alpha", columns="Beta", values="Avg_TAT")
+    
+    # Sorteer index en kolommen zodat 0.2 links/onder staat en 1.0 rechts/boven
+    heatmap_data = heatmap_data.sort_index(ascending=False) # Alpha op Y-as
+    heatmap_data = heatmap_data.sort_index(axis=1, ascending=True) # Beta op X-as
+
+    # =============================================================================
+    # PLOTTING
+    # =============================================================================
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(heatmap_data, annot=True, fmt=".2f", cmap="YlGnBu", 
+                cbar_kws={'label': 'Gemiddelde Turnaround Time (min)'})
+    
+    plt.title(f"Sensitivity Analysis: Alpha vs Beta\n(Gemiddelde over {N_SEEDS_PER_CELL} seeds per cel)")
+    plt.xlabel("Beta (Gewicht op Afstand)")
+    plt.ylabel("Alpha (Gewicht op Urgentie/Tijd)")
+    
+    # Opslaan
+    plot_path = OUTPUT_DIR / "heatmap_alpha_beta.png"
+    plt.savefig(plot_path)
+    df.to_csv(OUTPUT_DIR / "sensitivity_results.csv", index=False)
+    
+    print(f"\nKlaar! Heatmap opgeslagen als: {plot_path}")
+    plt.show()

@@ -1,10 +1,10 @@
-/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_11-40-52
-results_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_11-40-52/batch_results.csv
-summary_log=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_11-40-52/batch_summary.log
-parameters_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_11-40-52/parameters.csv
-planes_summary_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_11-40-52/planes_summary.csv
-gse_summary_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-23_11-40-52/GSE_summary.csv
-created_at=2026-04-23_11-40-52
+C:\Users\tiesa\agent-based-modelling\run logs\batch_2026-04-24_08-51-54
+results_csv=C:\Users\tiesa\agent-based-modelling\run logs\batch_2026-04-24_08-51-54\batch_results.csv
+summary_log=C:\Users\tiesa\agent-based-modelling\run logs\batch_2026-04-24_08-51-54\batch_summary.log
+parameters_csv=C:\Users\tiesa\agent-based-modelling\run logs\batch_2026-04-24_08-51-54\parameters.csv
+planes_summary_csv=C:\Users\tiesa\agent-based-modelling\run logs\batch_2026-04-24_08-51-54\planes_summary.csv
+gse_summary_csv=C:\Users\tiesa\agent-based-modelling\run logs\batch_2026-04-24_08-51-54\GSE_summary.csv
+created_at=2026-04-24_08-51-54
 gse_type=electric
-seeds=100
-workers=7
+seeds=114
+workers=11
