@@ -7,23 +7,8 @@ class GSE(object):
     Combines path-planning and movement logic with battery (SoC) management
     and auction bidding for task assignment.
     """
-
-    # -------------------------------------------------------------------------
-    # Initialization
-    # -------------------------------------------------------------------------
-
     def __init__(self, gse_id, start_node, nodes_dict, charging_nodes=None, speed=1.0):
-        """
-        Initialize a GSE object.
-        INPUT:
-            - gse_id        : [int] unique id for this GSE
-            - start_node    : [int] node_id of the start position
-            - nodes_dict    : [dict] copy of nodes_dict
-            - charging_nodes: [list[int]] node_ids of all charging stations.
-                              The GSE always drives to the nearest one.
-        """
-
-        # --- Fixed parameters ---
+        # Fixed parameters
         self.id             = gse_id
         self.nodes_dict     = nodes_dict
         self.charging_nodes = list(charging_nodes) if charging_nodes else []
@@ -31,12 +16,12 @@ class GSE(object):
         self.base_consumption_rate = 0.5  # consumption per time unit at base_speed
         self.speed       = self.base_speed
 
-        # --- Start position ---
+        # Start position
         self.start         = start_node
         self.current_node  = start_node
         self.position      = nodes_dict[start_node]["xy_pos"]
 
-        # --- Status & task ---
+        # Status and task
         # Possible statuses:
         #   "available"      - ready for a new task
         #   "taxiing"        - driving to a gate or depot
@@ -51,7 +36,7 @@ class GSE(object):
         self.work_end_time        = None
         self.task_stage           = None
 
-        # --- Battery ---
+        # Battery
         self.soc              = 100.0   # State of Charge in %
         self.consumption_rate = self.base_consumption_rate
         self.charge_duration  = 15.0   # fixed charging duration in minutes (always full charge)
@@ -61,7 +46,7 @@ class GSE(object):
         self.total_energy_consumed = 0.0  # cumulative battery consumption over the full simulation (%)
         self.completed_tasks       = 0    # number of completed service tasks
 
-        # --- Path & movement ---
+        # Path and movement
         self.path_to_goal = []   # list of (node_id, timestep) tuples
         self.from_to      = [0, 0]
         self.heading      = 0
@@ -70,28 +55,14 @@ class GSE(object):
         self.set_speed(speed)
 
     def set_speed(self, speed):
-        """
-        Set driving speed and scale battery use so
-        consumption per distance stays constant.
-        """
-        if speed <= 0:
-            raise ValueError(f"GSE speed must be positive, got {speed}.")
-
+        # Speed and scale battery use so consumption per distance is constant
         self.speed = float(speed)
         speed_ratio = self.speed / self.base_speed
         self.consumption_rate = self.base_consumption_rate * speed_ratio
 
-    # -------------------------------------------------------------------------
     # Battery management
-    # -------------------------------------------------------------------------
-
     def update_soc(self, dt):
-        """
-        Update State of Charge based on current status.
-        Call once per simulation timestep.
-        INPUT:
-            - dt: timestep size
-        """
+        # Update SoC based on current status, caled once per timestep
         if self.status == "taxiing":
             # Battery drains only while moving
             drain = min(self.soc, self.consumption_rate * dt)
@@ -121,10 +92,7 @@ class GSE(object):
             print(f"[GSE {self.id}] Kritieke SoC ({self.soc:.1f}%) tijdens rijden, noodstop -> needs_charging")
 
     def _nearest_charging_node(self, from_node, heuristics, busy_nodes=None):
-        """
-        Return (node_id, distance) of the least busy reachable charging station.
-        busy_nodes: dict {node_id: count} for GSEs already heading to or waiting at that station.
-        """
+        # Return the least busy charging station
         best_id, best_score = None, float('inf')
         for cn in self.charging_nodes:
             dist = heuristics.get(from_node, {}).get(cn, float('inf'))
@@ -139,10 +107,7 @@ class GSE(object):
         return best_id, best_dist
 
     def go_charge(self, nodes_dict, heuristics, t, busy_charging_nodes=None):
-        """
-        Plan a route to the least busy charging station.
-        Call when status == 'needs_charging'.
-        """
+        # Plan a route to the least busy chargings station
         target, _ = self._nearest_charging_node(self.current_node, heuristics, busy_charging_nodes)
         if target is None:
             raise Exception(
@@ -157,10 +122,7 @@ class GSE(object):
             label=f"charging station (node {target})",
         )
 
-    # -------------------------------------------------------------------------
-    # Auction
-    # -------------------------------------------------------------------------
-
+    # AUCTION
     def calculate_bid(
         self,
         gate_node_id,
@@ -170,18 +132,9 @@ class GSE(object):
         beta=1.0,
         max_shortest_path_distance=1.0,
     ):
-        """
-        Calculate a bid for a task at gate_node_id.
-        Lower value = better bid.
-        Returns float('inf') if GSE is unavailable, SoC too low, or if
-        the GSE cannot complete the task route with current battery.
-        INPUT:
-            - gate_node_id  : [int] first target node (cargo_from for load, plane.node_id for unload)
-            - heuristics    : [dict] precomputed distances between nodes
-            - second_node_id: [int] second target node (plane.node_id for load, cargo_to for unload)
-        RETURNS:
-            - bid : [float] bid value (lower is better)
-        """
+        # Lower bid = better. Returns infinity if unavailable, SoC too low, or battery insufficient for the route.
+        # gate_node_id: first target (cargo_from for load, plane.node_id for unload)
+        # second_node_id: second target (plane.node_id for load, cargo_to for unload)
         if self.status != "available" or self.soc <= self.low_soc_threshold:
             return float('inf')
 
@@ -215,15 +168,9 @@ class GSE(object):
         bid = alpha * distance_norm + beta * soc_penalty_norm
         return bid
 
-    # -------------------------------------------------------------------------
     # Path planning
-    # -------------------------------------------------------------------------
-
     def _plan_path(self, nodes_dict, heuristics, t, label="goal", forbidden_nodes=None):
-        """
-        Internal helper: run A* from self.start to self.goal.
-        forbidden_nodes: optional set of node_ids to avoid (rerouting).
-        """
+        # Runs A* from self.start to self.goal; forbidden_nodes optionally excludes nodes (used for rerouting)
         success, path = simple_single_agent_astar(
             nodes_dict, self.start, self.goal, heuristics, t, forbidden_nodes=forbidden_nodes
         )
@@ -267,6 +214,9 @@ class GSE(object):
         self.work_end_time = None
         self._plan_path(nodes_dict, heuristics, t, label=label, forbidden_nodes=forbidden_nodes)
 
+    # Plans the GSE's route based on service type:
+    #   load: drive to cargo_from first (pick up cargo), then continue to the plane
+    #   unload: drive directly to the plane (cargo is already on board)
     def plan_service_task(self, plane, nodes_dict, heuristics, t, service_type=None):
         self.assigned_plane_id = plane.id
         self.assigned_service_type = service_type or self.assigned_service_type or plane.next_service_type
@@ -293,17 +243,9 @@ class GSE(object):
                 f"Unknown service type '{self.assigned_service_type}' for plane {plane.id}."
             )
 
-    # -------------------------------------------------------------------------
     # Movement
-    # -------------------------------------------------------------------------
-
+    # Computes heading in degrees from xy_start to xy_next and updates self.heading
     def get_heading(self, xy_start, xy_next):
-        """
-        Compute heading in degrees based on two xy positions.
-        INPUT:
-            - xy_start : (x, y) of the current node
-            - xy_next  : (x, y) of the next node
-        """
         dx = xy_next[0] - xy_start[0]
         dy = xy_next[1] - xy_start[1]
         if abs(dx) < 1e-9 and abs(dy) < 1e-9:
@@ -317,25 +259,19 @@ class GSE(object):
             # Use atan2 for a stable heading calculation.
             self.heading = round(math.degrees(math.atan2(-dx, dy)) % 360)
 
+    # Advances the GSE along its path by up to speed*dt distance units.
+    # May cross multiple path segments in one timestep if dt is large.
     def move(self, dt, t):
-        """
-        Move the GSE one timestep along its planned path.
-        Updates position, heading, and current_node.
-        On arrival at the goal, status is updated.
-        INPUT:
-            - dt : timestep size
-            - t  : current time (for logging)
-        """
         if not self.path_to_goal or dt <= 0:
             return
 
         remaining_travel = self.speed * dt
         while remaining_travel > 1e-9 and self.path_to_goal:
-            from_node = self.from_to[0]
             to_node   = self.from_to[1]
             xy_to     = self.nodes_dict[to_node]["xy_pos"]
             distance_to_target = math.dist(self.position, xy_to)
 
+            # Already at the next node — snap and advance without consuming travel budget
             if distance_to_target <= 1e-9:
                 self.position = xy_to
                 self.current_node = to_node
@@ -366,9 +302,7 @@ class GSE(object):
                 break
 
     def _advance_path_segment(self):
-        """
-        Advance to the next edge segment of the current path.
-        """
+        # Advance to the next edge segment of the current path
         if len(self.path_to_goal) <= 1:
             self.path_to_goal = []
             self.from_to = [self.current_node, self.current_node]
@@ -379,21 +313,12 @@ class GSE(object):
         self.from_to      = [self.current_node, new_next_id]
 
     def _on_goal_reached(self, t):
-        """
-        Callback when arriving at the goal node.
-        Sets the next status based on task stage.
-        """
+        # Callback when arriving at the goal node.
+        # Sets the next status based on task stage.
         self.path_to_goal = []
         self.from_to = [self.current_node, self.current_node]
 
         if self.task_stage == "to_depot":
-            # Safety check: ensure we really arrived at a charging node
-            node_type = self.nodes_dict[self.current_node]["type"]
-            if node_type != "charging":
-                raise Exception(
-                    f"[GSE {self.id}] t={t}: arrived at node {self.current_node} (type='{node_type}') "
-                    f"but this is not a charging station!"
-                )
             self.status = "charging"
             self.charge_time_elapsed = 0.0
             self.work_end_time = None
@@ -414,15 +339,9 @@ class GSE(object):
             service_label = self.assigned_service_type or "service"
             print(f"[GSE {self.id}] t={t}: gate {self.goal} bereikt, status -> working ({service_label})")
 
-    # -------------------------------------------------------------------------
-    # Helper functions
-    # -------------------------------------------------------------------------
 
     def finish_working(self, nodes_dict, heuristics, t):
-        """
-        Call when the assigned plane service has finished.
-        The GSE returns to the depot or becomes available immediately.
-        """
+        # When the assigned plane service has finished, the GSE returns to the depot or becomes available
         self.assigned_plane_id = None
         self.assigned_service_type = None
         self.work_end_time = None

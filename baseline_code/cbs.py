@@ -78,9 +78,7 @@ def _update_gse_reservations(gse, reserved_nodes, reserved_edges):
 # =============================================================================
 
 def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
-    # =========================================================================
-    # STEP 1 — Build initial spatio-temporal reservations for all taxiing GSEs
-    # =========================================================================
+    # 1. Build initial spatio-temporal reservation for all GSEs
     reserved_nodes = {}
     reserved_edges = {}
 
@@ -88,15 +86,13 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
         if gse.status == "taxiing":
             _add_gse_reservations(gse, reserved_nodes, reserved_edges)
 
-    # =========================================================================
-    # STEP 2 — Priority-based evasion (highest ID processed first → lowest ID last)
-    #
-    # A GSE only checks conflicts with LOWER-ID (higher-priority) GSEs.
-    # If blocked → try to replan around them.
-    # After a successful replan → update shared reservations ("communication")
+    # 2. Priority-based evasion (highest ID processed first → lowest ID last)
+
+    # A GSE only checks conflicts with lower-ID GSEs.
+    # If blocked, try to replan around them.
+    # After a successful replan,  update shared reservations ("communication")
     #   so the next (higher-priority) GSEs see the corrected picture.
-    # If no detour exists → wait at current node (waiting=True).
-    # =========================================================================
+    # If no detour exists, wait at current node (waiting=True).
     stuck_gses = set()
 
     for gse in sorted(gse_lst, key=lambda x: x.id, reverse=True):
@@ -118,13 +114,13 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
         for step_idx, (node_id, _) in enumerate(gse.path_to_goal[:RESERVATION_HORIZON]):
             my_eta = step_idx + 1
 
-            # Node conflict — only yield to lower-ID (higher-priority) GSEs
+            # Node conflict,  only yield to lower-ID (higher-priority) GSEs
             for blocker_id, blocker_eta in reserved_nodes.get(node_id, []):
                 if blocker_id < gse.id and abs(my_eta - blocker_eta) <= TIME_MARGIN:
                     blocked_nodes.add(node_id)
                     break
 
-            # Edge conflict — same priority rule
+            # Edge conflict, same priority rule
             edge = frozenset({prev_node, node_id})
             for blocker_id, blocker_eta in reserved_edges.get(edge, []):
                 if blocker_id < gse.id and abs(my_eta - blocker_eta) <= TIME_MARGIN:
@@ -148,18 +144,16 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
             # react to the updated reservation, not the stale original one.
             _update_gse_reservations(gse, reserved_nodes, reserved_edges)
         else:
-            # No alternative route → wait at current node until blocker clears
+            # No alternative route? Wait at current node until blocker clears
             gse.waiting = True
             stuck_gses.add(gse)
 
-    # =========================================================================
-    # STEP 3 — Cooperative rerouting (only for lower-priority bystanders)
-    #
-    # If a GSE is stuck, other GSEs that are about to drive through its position
+    # 3. Cooperative rerouting (only for lower-priority)
+
+    # If a GSE is stuck, other GSEs that are about to drive through its position 
     # should reroute — but ONLY if they have lower priority (higher ID) than the
     # stuck GSE. Higher-priority GSEs proceed as normal; the stuck lower-priority
     # GSE must wait or be broken out by the deadlock breaker.
-    # =========================================================================
     if stuck_gses:
         min_stuck_id = min(sg.id for sg in stuck_gses)
 
@@ -176,7 +170,7 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
                 continue
             if gse in stuck_gses or gse.task_stage == "to_depot":
                 continue
-            # Higher-priority GSEs (lower ID) drive through; don't reroute them
+            # Higher-priority GSEs drive through; don't reroute them
             if gse.id <= min_stuck_id:
                 continue
 
@@ -202,12 +196,10 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
                     _update_gse_reservations(gse, reserved_nodes, reserved_edges)
                     stuck_gses.discard(gse)
 
-    # =========================================================================
-    # STEP 4 — Deadlock breaker (≥2 GSEs mutually stuck)
-    #
-    # Picks the lowest-priority (highest-ID) stuck GSE and forces it to a free
-    # neighbour node, then replans from there to its goal.
-    # =========================================================================
+    # 4. Deadlock breaker (≥2 GSEs mutually stuck)
+    
+    # Picks the lowest-priority stuck GSE and forces it to a free neighbour node, 
+    # then replans from there to its goal.
     if len(stuck_gses) >= 2:
         loser = max(stuck_gses, key=lambda x: x.id)
 
@@ -261,14 +253,8 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
 # =============================================================================
 
 def _replan_around(gse, blocked_nodes, nodes_dict, heuristics, t):
-    """
-    Find a new path from gse's current position to gse.goal that avoids
-    blocked_nodes. Temporarily removes those nodes from the graph, runs A*,
-    then restores the graph.
-
-    Returns True and updates gse.path_to_goal / gse.from_to on success.
-    Returns False if no alternative route exists (caller should set waiting=True).
-    """
+    # Finds a new path from GSEs current position that avoids blocked nodes.
+    # Removes those nodes from the graph, runs A* and restores graph.
     is_mid_edge = (
         hasattr(gse, "from_to")
         and len(gse.from_to) == 2
@@ -276,7 +262,7 @@ def _replan_around(gse, blocked_nodes, nodes_dict, heuristics, t):
     )
     start_node = gse.from_to[1] if is_mid_edge else gse.current_node
 
-    # Already committed to a blocked node — can't turn back mid-edge
+    # Already committed to a blocked node, can't turn back mid-edge
     if start_node in blocked_nodes:
         return False
 

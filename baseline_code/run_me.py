@@ -17,7 +17,7 @@ from GSE import GSE
 from Plane import load_plane_schedule, build_plane_schedule_lookup, spawn_planes
 from Fleet_manager import Fleet_manager
 from auction_system import AuctionSystem
-from cbs import resolve_conflicts  # <-- IMPORTED CBS MODULE
+from cbs import resolve_conflicts
 from visualization import map_running
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,9 +42,10 @@ departure_delay_minutes = 5
 # --- GSE configuration ---
 GSE_COUNT = 8
 GSE_RANDOM_SEED = None
-GSE_SPEED = 4.0    # driving speed for all GSEs; battery drain scales with speed
-GSE_ELECTRIC = True  # True = electric (charge_duration=60 min, consumption=0.83%/unit)
-               #       False = combustion engine (charge_duration=10 min, consumption=0.14%/unit)
+GSE_SPEED = 4.0           # driving speed for all GSEs; battery drain scales with speed
+GSE_ELECTRIC = False       # True = electric, False = gas
+# Electric; charge duration 60min, base concumption 0.83
+# Gas; charge duration 10min, base consumption 0.14
 
 # Auction weights (normalized bid components)
 AUCTION_ALPHA = 0.7
@@ -88,7 +89,7 @@ def import_layout(nodes_file, edges_file):
     df_edges = pd.read_excel(edges_path)
 
     nodes_dict = {}
-    for i, row in df_nodes.iterrows():
+    for _, row in df_nodes.iterrows():
         node_properties = {
             "id":        row["id"],
             "x_pos":     row["x_pos"],
@@ -101,7 +102,7 @@ def import_layout(nodes_file, edges_file):
         nodes_dict[node_id] = node_properties
 
     edges_dict = {}
-    for i, row in df_edges.iterrows():
+    for _, row in df_edges.iterrows():
         edge_id       = (row["from"], row["to"])
         from_node     = edge_id[0]
         to_node       = edge_id[1]
@@ -163,30 +164,28 @@ def assign_service_tasks(active_planes, auctioned_tasks, auction_system, heurist
     for gse, plane in assignments:
         service_type = plane.next_service_type
         if service_type is None:
-            continue
+            continue # plane state changed between bit and assignment
+        # lock in the assignment
         auctioned_tasks.add((plane.id, service_type))
         plane.mark_service_assigned(service_type, gse.id)
         gse.plan_service_task(plane, nodes_dict, heuristics, t, service_type=service_type)
 
 
 def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
-    # Random spawn configuration for GSEs. Spawns GSEs on random non-gate nodes at t=0.
-    candidate_nodes = [
-        node_id
-        for node_id, node_props in nodes_dict.items()
-        if node_props.get("type") != "gate"
-    ]
+    # GSEs may not spawn on gate nodes (gates are reserved for aircraft)
+    candidate_nodes = [n for n, props in nodes_dict.items() if props.get("type") != "gate"]
     if not candidate_nodes:
         raise ValueError("No non-gate nodes available for random GSE spawning.")
 
     rng = random.Random(seed)
-    # Sample without replacement if enough start nodes exist, otherwise with replacement.
+    # Prefer sampling without replacement; fall back to with-replacement if more GSEs than nodes
     if gse_count <= len(candidate_nodes):
         spawn_nodes = rng.sample(candidate_nodes, gse_count)
     else:
         spawn_nodes = [rng.choice(candidate_nodes) for _ in range(gse_count)]
 
-    return [(gse_id, start_node) for gse_id, start_node in enumerate(spawn_nodes, start=1)]
+    # Return list of (gse_id, start_node) tuples, IDs starting at 1
+    return list(enumerate(spawn_nodes, start=1))
 
 
 def render_simulation_frame(map_properties, gse_lst, active_planes, t):
@@ -218,6 +217,11 @@ def pace_simulation(sim_minutes, real_seconds_per_pseudo_minute, simulation_star
 # -------------------
 def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, gse_speed,
                   gse_type_label, filepath=None):
+    # Create a run summary in a .log file
+    # Log outputs:
+    #   1. Run metadata (GSE type, datetime, duration and fleet parameters)
+    #   2. Per flight turnaround times, waiting times
+    #   3. Per GSE energy consumption
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -287,6 +291,7 @@ def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, g
 
 
 def _gse_task_description(gse):
+    # Prints a task description of each GSE during a run
     if gse.status == "charging":
         return f"charging ({gse.charge_time_elapsed:.0f}/{gse.charge_duration:.0f} min)"
     if gse.status == "needs_charging":
@@ -312,6 +317,7 @@ def _gse_task_description(gse):
 
 
 def print_gse_status_table(gse_lst, t, prev_line_count=0):
+    # Print screen update status for all GSEs
     col_task = 36
     header = (f"  {'GSE':>3} │ {'SoC':>6} │ {'Available':>9} │ {'Status':<20} │ Task")
     sep    = "  " + "─" * (3 + 3 + 8 + 3 + 11 + 3 + 22 + 3 + col_task)
@@ -340,9 +346,13 @@ def print_gse_status_table(gse_lst, t, prev_line_count=0):
 # =============================================================================
 # INITIALIZATION 
 # =============================================================================
+
+# Parse the layout files and derive the graph ad all pairs shortest path tab;e
 nodes_dict, edges_dict = import_layout(nodes_file, edges_file)
 graph      = create_graph(nodes_dict, edges_dict, plot_graph)
 heuristics = calc_heuristics(graph, nodes_dict)
+
+# The auction system normalizes distance against the longest possible path
 MAX_SHORTEST_PATH_DISTANCE = max(
     (distance for distances in heuristics.values() for distance in distances.values()),
     default=1.0,
@@ -350,6 +360,8 @@ MAX_SHORTEST_PATH_DISTANCE = max(
 if MAX_SHORTEST_PATH_DISTANCE <= 0:
     MAX_SHORTEST_PATH_DISTANCE = 1.0
 
+
+# Collect all charging station nodes; GSEs will navigate here to recharge
 charging_node_ids = [nid for nid, props in nodes_dict.items() if props["type"] == "charging"]
 if not charging_node_ids:
     raise ValueError("Geen oplaadstation nodes gevonden in de layout (type='charging').")
@@ -359,9 +371,10 @@ print(f"[Init] Oplaadstations gevonden: nodes {charging_node_ids}")
 # =============================================================================
 # SIMULATION FUNCTION
 # =============================================================================
-def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_duration, base_consumption_rate, gse_type_label, simulation_duration_hours=24, log_filepath=None,
-                   gse_spawn_config=None, *, enable_visualization=None, pace=True,
-                   show_status=True):
+def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_duration, base_consumption_rate, gse_type_label, simulation_duration_hours=24,
+                   gse_spawn_config=None, log_filepath=None, *, enable_visualization=None, pace=True):
+    # Run the full 24-hour simulation
+
     print(f"\n{'=' * 60}")
     print(f"  Starting {gse_type_label.upper()} simulation")
     print(f"  charge_duration={charge_duration} min  |  base_consumption={base_consumption_rate}%/unit")
@@ -369,6 +382,8 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
 
     visualize = visualization if enable_visualization is None else bool(enable_visualization)
 
+    # SETUP AGENTS:
+    # load plane schedule
     plane_schedule = load_plane_schedule(
         plane_data_file,
         nodes_dict,
@@ -380,6 +395,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
     plane_schedule_lookup = build_plane_schedule_lookup(plane_schedule)
     active_planes = []
 
+    # Spawn GSE agents at their starting node
     if gse_spawn_config is None:
         gse_spawn_config = build_random_gse_spawn_config(nodes_dict, gse_count, seed=GSE_RANDOM_SEED)
     gse_lst = []
@@ -404,6 +420,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
         f"alpha={auction_alpha:.3f}, beta={auction_beta:.3f}, "
         f"d_max={MAX_SHORTEST_PATH_DISTANCE:.3f}"
     )
+    # Tracks pairs that have already been put to auction so the same task is never auctioned twice.
     auctioned_tasks = set()
 
     if visualize:
@@ -411,9 +428,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
 
         map_properties = map_initialization(nodes_dict, edges_dict)
 
-    # =========================================================================
-    # SIMULATIELUS
-    # =========================================================================
+    # SIMULATION LOOP
     running                        = True
     escape_pressed                 = False
     time_end                       = simulation_duration_hours * 60
@@ -423,11 +438,11 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
     real_seconds_per_pseudo_minute = real_minutes_per_pseudo_hour
     simulation_start_wall_time     = timer.perf_counter()
     _status_table_lines            = 0
-
     print("Simulation Started")
     while running:
         t = round(t, 2)
 
+        # Stop condition
         if t >= time_end or escape_pressed:
             running = False
             if visualize:
@@ -435,13 +450,15 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                 pg.quit()
             print("Simulation Stopped")
             break
-
+        
+        # 1. Spawn aircraft that arrive at time t
         new_planes = spawn_planes(t, plane_schedule_lookup)
         if new_planes:
             active_planes.extend(new_planes)
 
         plane_by_id = {plane.id: plane for plane in active_planes}
 
+        # 2. Check for GSEs that have just finished a service operation
         for gse in gse_lst:
             if gse.status == "working" and gse.work_end_time is not None and t >= gse.work_end_time - 1e-9:
                 plane = plane_by_id.get(gse.assigned_plane_id)
@@ -475,6 +492,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                         f"GSE {gse.id} has unknown service type '{gse.assigned_service_type}'."
                     )
 
+        # 3. Despawn aircraft cleared for departure
         despawned_ids = {plane.id for plane in active_planes if plane.ready_to_despawn(t)}
         if despawned_ids:
             for plane in active_planes:
@@ -484,12 +502,14 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                     auctioned_tasks.discard((plane.id, "load"))
             active_planes = [plane for plane in active_planes if plane.id not in despawned_ids]
             plane_by_id   = {plane.id: plane for plane in active_planes}
-
+        
+        # 4. Update gate occupancy and GSE/gate conflict status
         fleet_manager.update_gate_status(active_planes, aircraft_lst=gse_lst, t=t)
 
-        # First auction round: assign tasks for planes that currently need service.
+        # 5. First auction round: assign tasks for planes that currently need service.
         assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
+        # 6. Route low-battery GSEs to charging station
         # Track load per charging node so go_charge can account for congestion.
         charging_load = {}
         for gse in gse_lst:
@@ -499,6 +519,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
 
         for gse in gse_lst:
             if gse.status == "needs_charging":
+                # If this GSE was assigned to a plane, release the task back to the auction pool
                 if gse.assigned_plane_id is not None:
                     plane = plane_by_id.get(gse.assigned_plane_id)
                     if (plane is not None
@@ -518,9 +539,10 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
         if should_render_step:
             escape_pressed = render_simulation_frame(map_properties, gse_lst, active_planes, t)
         
-        # --- CBS: Conflict Resolution ---
+        # 7. CBS conflict resolution
         resolve_conflicts(gse_lst, nodes_dict, heuristics, t)
 
+        # 8. Move GSEs forward by dt
         movement_substeps = 1
         if should_render_step:
             taxiing_gses = [gse for gse in gse_lst if gse.status == "taxiing"]
@@ -549,6 +571,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
         if not should_render_step and pace:
             pace_simulation(t + dt, real_seconds_per_pseudo_minute, simulation_start_wall_time)
 
+        # 9. Release loading tasks once the unload GSE has left the gate
         gse_by_id = {gse.id: gse for gse in gse_lst}
         for plane in active_planes:
             if plane.status != "awaiting_load_release" or plane.load_release_gse_id is None:
@@ -563,13 +586,14 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                 plane.release_for_loading()
                 print(f"[Plane {plane.id}] t={t}: unloading GSE left gate, loading can now be assigned")
 
-        # Second auction round: newly released load tasks can still be assigned
-        # in the same tick.
+        # 10. Second auction round: newly released load tasks from previous step
         assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
+        # 11. Handle GSEs that have arrived at cargo nodes
         plane_by_id = {plane.id: plane for plane in active_planes}
         for gse in gse_lst:
             if gse.status == "at_cargo_pickup":
+                # GSE has collected the cargo, new route to the aircraft
                 plane = plane_by_id.get(gse.assigned_plane_id)
                 if plane is None:
                     print(f"[GSE {gse.id}] t={t}: assigned plane {gse.assigned_plane_id} no longer active, releasing GSE")
@@ -585,6 +609,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                     f"en route to gate {plane.node_id}"
                 )
             elif gse.status == "at_cargo_dropoff":
+                # GSE has delivered unloaded cargo to the cargo node, task done
                 plane = plane_by_id.get(gse.assigned_plane_id)
                 if plane is None:
                     print(f"[GSE {gse.id}] t={t}: assigned plane {gse.assigned_plane_id} no longer active, releasing GSE")
@@ -593,6 +618,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                 print(f"[Plane {plane.id}] t={t}: unloaded cargo delivered to node {plane.cargo_to}")
                 gse.finish_working(nodes_dict, heuristics, t)
             elif gse.status == "working" and gse.work_end_time is None:
+                # GSE has just arrived at the aircraft, computes time when service is done.
                 plane = plane_by_id.get(gse.assigned_plane_id)
                 if plane is None:
                     print(f"[GSE {gse.id}] t={t}: assigned plane {gse.assigned_plane_id} no longer active, releasing GSE")
@@ -604,13 +630,13 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                     f"completes at t={gse.work_end_time}"
                 )
 
-        if show_status and step_count % status_print_interval == 0:
+        if step_count % status_print_interval == 0:
             _status_table_lines = print_gse_status_table(gse_lst, t, _status_table_lines)
 
         t = t + dt
         step_count += 1
 
-    # Collect metrics
+    # Collect simulation metrics
     completed_planes = [p for p in plane_schedule if hasattr(p, 'departed_time') and p.departed_time is not None]
     n_completed = len(completed_planes)
     tat_values = [p.turnaround_time for p in completed_planes]
@@ -618,6 +644,10 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
     gse_metrics = [{'id': gse.id, 'tasks_completed': gse.completed_tasks, 'total_energy_consumed_pct': gse.total_energy_consumed} for gse in gse_lst]
     total_energy_used = sum(gse.total_energy_consumed for gse in gse_lst)
     avg_tasks_per_gse = sum(gse.completed_tasks for gse in gse_lst) / len(gse_lst) if gse_lst else 0
+
+    if log_filepath is not None:
+        write_run_log(log_filepath.parent, gse_lst, plane_schedule, simulation_duration_hours,
+                      gse_speed, gse_type_label, filepath=log_filepath)
 
     return {
         'mean_tat': mean_tat,

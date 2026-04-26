@@ -1,27 +1,13 @@
 class AuctionSystem:
     def __init__(self, gse_list, alpha=1.0, beta=1.0, max_shortest_path_distance=1.0):
-        """
-        Initialize the auction system.
-        INPUT:
-            - gse_list: list of available GSE objects
-            - alpha: weight for normalized distance
-            - beta: weight for normalized SoC penalty
-            - max_shortest_path_distance: fixed normalization scale for distance
-        """
+        # init auction system; available GSEs, weights and max_shortest distance
         self.gse_list = gse_list
         self.alpha = float(alpha)
         self.beta = float(beta)
         self.max_shortest_path_distance = max(float(max_shortest_path_distance), 1e-9)
 
     def allocate_tasks(self, unassigned_tasks, heuristics):
-        """
-        Assign tasks to GSEs based on bids.
-        INPUT:
-            - unassigned_tasks: list of Plane objects or gate_node_ids needing service
-            - heuristics: precomputed distances between all nodes
-        RETURNS:
-            - assignments: a list of tuples (gse_agent, task)
-        """
+        # Assign tasks to GSEs based on bids
         assignments = []
         
         # Auction each task one by one (Sequential Single-Item Auction)

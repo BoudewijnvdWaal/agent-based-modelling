@@ -19,11 +19,6 @@ class Plane:
         departure_delay_minutes,
     ):
         gate_node_id = int(gate_node_id)
-        if gate_node_id not in nodes_dict:
-            raise ValueError(
-                f"Gate node {gate_node_id} for plane {plane_id} not found in nodes_dict."
-            )
-
         self.id = str(plane_id)
         self.node_id = gate_node_id
         self.gate_node_id = gate_node_id
@@ -31,14 +26,7 @@ class Plane:
         self.spawn_time_minutes = float(spawn_time_minutes)
         self.cargo_from = int(cargo_from)
         self.cargo_to = int(cargo_to)
-        if self.cargo_from not in nodes_dict:
-            raise ValueError(
-                f"Cargo-from node {self.cargo_from} for plane {plane_id} not found in nodes_dict."
-            )
-        if self.cargo_to not in nodes_dict:
-            raise ValueError(
-                f"Cargo-to node {self.cargo_to} for plane {plane_id} not found in nodes_dict."
-            )
+
         self.xy_pos = nodes_dict[gate_node_id]["xy_pos"]
         self.unloading_duration_minutes = float(unloading_duration_minutes)
         self.loading_duration_minutes = float(loading_duration_minutes)
@@ -56,10 +44,12 @@ class Plane:
         self.load_release_gse_id = None
         self.status = "scheduled"
 
+    # Called when the plane arrives at its gate; begins the unload phase
     def spawn(self):
         self.status = "awaiting_unload"
         return self
 
+    # Returns the next required service type based on current status
     @property
     def next_service_type(self):
         # Planes always follow unload -> load.
@@ -69,37 +59,26 @@ class Plane:
             return "load"
         return None
 
+    # Returns True if the plane still needs a GSE assigned
     def needs_service_assignment(self):
         return self.next_service_type is not None
 
+    # Locks in a GSE assignment and advances the plane's status
     def mark_service_assigned(self, service_type, gse_id):
-        if service_type == "unload" and self.status == "awaiting_unload":
+        if service_type == "unload":
             self.status = "unload_assigned"
-        elif service_type == "load" and self.status == "awaiting_load":
+        elif service_type == "load":
             self.status = "load_assigned"
-        else:
-            raise ValueError(
-                f"Plane {self.id} cannot assign service '{service_type}' while in status '{self.status}'."
-            )
         self.assigned_gse_id = gse_id
 
+    # Starts the service, records timing, and returns the computed end time
     def start_service(self, service_type, gse_id, start_time):
         if service_type == "unload":
-            expected_status = "unload_assigned"
             active_status = "unloading"
             duration = self.unloading_duration_minutes
         elif service_type == "load":
-            expected_status = "load_assigned"
             active_status = "loading"
             duration = self.loading_duration_minutes
-        else:
-            raise ValueError(f"Unknown service type '{service_type}' for plane {self.id}.")
-
-        if self.status != expected_status:
-            raise ValueError(
-                f"Plane {self.id} cannot start service '{service_type}' while in status '{self.status}'."
-            )
-
         self.status = active_status
         self.current_service_type = service_type
         self.current_service_gse_id = gse_id
@@ -110,18 +89,16 @@ class Plane:
             self.load_start_time = float(start_time)
         return self.current_service_end_time
 
+    # Finalises the current service; after unload, waits for GSE to leave before allowing load
     def complete_current_service(self, completion_time):
         if self.current_service_type == "unload":
             self.unloading_complete_time = float(completion_time)
-            # Safety rule: loading starts only after the unloading GSE leaves the gate.
+            # Loading starts only after the unloading GSE leaves the gate
             self.status = "awaiting_load_release"
         elif self.current_service_type == "load":
             self.loading_complete_time = float(completion_time)
             self.departure_ready_time = self.loading_complete_time + self.departure_delay_minutes
             self.status = "ready_to_depart"
-        else:
-            raise ValueError(f"Plane {self.id} has no active service to complete.")
-
         completed_service_type = self.current_service_type
         self.current_service_type = None
         self.current_service_end_time = None
@@ -129,21 +106,16 @@ class Plane:
         self.assigned_gse_id = None
         return completed_service_type
 
+    # Records which GSE finished unloading so the gate can be cleared before loading begins
     def mark_unloading_departed(self, gse_id):
-        if self.status != "awaiting_load_release":
-            raise ValueError(
-                f"Plane {self.id} cannot wait for unloading departure while in status '{self.status}'."
-            )
         self.load_release_gse_id = gse_id
 
+    # Clears the unload GSE and opens the plane for load assignment
     def release_for_loading(self):
-        if self.status != "awaiting_load_release":
-            raise ValueError(
-                f"Plane {self.id} cannot release for loading while in status '{self.status}'."
-            )
         self.status = "awaiting_load"
         self.load_release_gse_id = None
 
+    # Returns True when the plane is ready to leave and departure time has passed
     def ready_to_despawn(self, t):
         return (
             self.status == "ready_to_depart"
@@ -155,6 +127,7 @@ class Plane:
         self.departed_time = float(departure_time)
         self.status = "departed"
 
+    # Total time from gate arrival to departure in simulation minutes
     @property
     def turnaround_time(self):
         if self.departed_time is None:

@@ -1,22 +1,3 @@
-"""
-find_n_seeds_cv.py — Approach 2: stabilization of the coefficient of variation
-to determine the minimum number of simulation runs needed.
-
-CV = σ(o) / μ(o)
-
-Stabilization is detected when the CV has not changed by more than `eps`
-(relative change) over the last `window` consecutive runs.
-
-Tracks three outputs:
-  - mean_tat_gas       (raw per-seed TAT for conventional GSE)
-  - mean_tat_electric  (raw per-seed TAT for electric GSE)
-  - diff               (paired difference: gas − electric)
-
-Usage:
-    python find_n_seeds_cv.py [--window 20] [--eps 0.02] [--max-runs 300]
-    python find_n_seeds_cv.py --output cv_plot.png
-"""
-
 import argparse
 import math
 import sys
@@ -35,9 +16,15 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(BASE_DIR))
 from batch_run import parse_log, _silence
 
+# Stabilization parameters
+WINDOW   = 20     # number of consecutive runs over which CV must be stable
+EPS      = 0.02   # max relative change in CV to be considered stable (2%)
+MIN_RUNS = 30     # minimum runs before checking stabilization
+MAX_RUNS = 300    # hard cap
 
+
+# Runs both gas and electric conditions for one seed with the same spawn config
 def _run_paired_seed(seed: int, batch_dir: Path) -> dict:
-    """Run both gas and electric conditions for one seed with the same spawn config."""
     import run_me
 
     log_gas  = batch_dir / f"seed{seed:03d}_gas.log"
@@ -48,15 +35,17 @@ def _run_paired_seed(seed: int, batch_dir: Path) -> dict:
     )
     with _silence():
         run_me.run_simulation(
+            run_me.GSE_COUNT, run_me.GSE_SPEED, run_me.AUCTION_ALPHA, run_me.AUCTION_BETA,
             2.0, 0.25, "gas",
             log_filepath=log_gas, gse_spawn_config=spawn_cfg,
-            enable_visualization=False, pace=False, show_status=False,
+            enable_visualization=False, pace=False,
         )
     with _silence():
         run_me.run_simulation(
+            run_me.GSE_COUNT, run_me.GSE_SPEED, run_me.AUCTION_ALPHA, run_me.AUCTION_BETA,
             15.0, 0.5, "electric",
             log_filepath=log_elec, gse_spawn_config=spawn_cfg,
-            enable_visualization=False, pace=False, show_status=False,
+            enable_visualization=False, pace=False,
         )
 
     return {
@@ -64,18 +53,9 @@ def _run_paired_seed(seed: int, batch_dir: Path) -> dict:
         "tat_electric": parse_log(log_elec)["mean_tat"],
     }
 
-# =============================================================================
-# DEFAULT PARAMETERS
-# =============================================================================
-WINDOW   = 20     # number of consecutive runs over which CV must be stable
-EPS      = 0.02   # max relative change in CV to be considered stable (2%)
-MIN_RUNS = 30     # minimum runs before checking stabilization
-MAX_RUNS = 300    # hard cap
-# =============================================================================
 
-
+# Coefficient of variation: std / mean. Returns inf if mean is near zero or fewer than 2 values
 def _cv(values: list[float]) -> float:
-    """Coefficient of variation: std / mean. Returns inf if mean ≈ 0."""
     if len(values) < 2:
         return float("inf")
     mu = sum(values) / len(values)
@@ -85,8 +65,8 @@ def _cv(values: list[float]) -> float:
     return math.sqrt(variance) / abs(mu)
 
 
+# Returns True when the last `window` CV values all fall within eps of their mean
 def _stable(cv_history: list[float], window: int, eps: float) -> bool:
-    """True when the last `window` CV values all fall within eps of their mean."""
     if len(cv_history) < window:
         return False
     recent = cv_history[-window:]
@@ -96,16 +76,14 @@ def _stable(cv_history: list[float], window: int, eps: float) -> bool:
     return all(abs(v - mu) / abs(mu) <= eps for v in recent)
 
 
+# Runs paired simulations and tracks CV stabilization for gas TAT, electric TAT, and their difference.
+# Returns full history and the stabilization point n* for each output.
 def find_n_seeds_cv(
     window: int = WINDOW,
     eps: float = EPS,
     min_runs: int = MIN_RUNS,
     max_runs: int = MAX_RUNS,
 ) -> dict:
-    """
-    Run paired simulations and track CV stabilization for three outputs.
-    Returns full history and the stabilization point n* for each output.
-    """
     batch_ts  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     batch_dir = LOG_DIR / f"find_n_cv_{batch_ts}"
     batch_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +134,7 @@ def find_n_seeds_cv(
         stable_elec = k_valid >= min_runs and _stable(cv_elec_hist, window, eps)
         stable_diff = k_valid >= min_runs and _stable(cv_diff_hist, window, eps)
 
+        # Record the first run at which each output stabilizes
         if stable_gas  and n_stable["gas"]      is None: n_stable["gas"]      = k_valid
         if stable_elec and n_stable["electric"] is None: n_stable["electric"] = k_valid
         if stable_diff and n_stable["diff"]     is None: n_stable["diff"]     = k_valid
@@ -187,7 +166,7 @@ def find_n_seeds_cv(
             print(f"\n  ✓ All three outputs stabilized.")
             break
 
-    # fill any that never stabilized
+    # Fill any outputs that never stabilized within max_runs
     for key in n_stable:
         if n_stable[key] is None:
             n_stable[key] = k_valid
@@ -208,6 +187,7 @@ def find_n_seeds_cv(
     }
 
 
+# Plots CV convergence curves for gas, electric, and paired difference with stabilization markers
 def plot_results(result: dict, save_path: Path = None) -> None:
     hist = result["history"]
     ks       = [h["k"]       for h in hist]
@@ -249,7 +229,7 @@ def plot_results(result: dict, save_path: Path = None) -> None:
         ax.scatter(ks, cv_vals, color=color, alpha=0.45, s=18, zorder=2)
         ax.plot(ks, cv_vals, color=color, lw=1.5, zorder=3, label=r"$c_v = \sigma / \mu$")
 
-        # rolling mean of CV to show trend
+        # Rolling mean to show the stabilization trend more clearly
         if len(cv_vals) >= window:
             rolling = np.convolve(cv_vals, np.ones(window) / window, mode="valid")
             rolling_ks = ks[window - 1:]
@@ -259,7 +239,7 @@ def plot_results(result: dict, save_path: Path = None) -> None:
         ax.axvline(n_stab, color="#C0392B", lw=1.5, ls="--",
                    label=f"Stable at k = {n_stab}")
 
-        # shade stable region
+        # Shade the stable region after the stabilization point
         ax.axvspan(n_stab, max(ks), alpha=0.07, color="#C0392B")
 
         ax.set_ylabel(r"$c_v$", fontsize=10)
@@ -276,10 +256,6 @@ def plot_results(result: dict, save_path: Path = None) -> None:
     else:
         plt.show()
 
-
-# =============================================================================
-# ENTRY POINT
-# =============================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

@@ -1,14 +1,3 @@
-"""
-batch_run.py — Batch runner: runs N seeds in either electric or gas mode.
-
-The GSE_ELECTRIC flag in run_me.py controls which condition is used.
-
-Usage:
-    python batch_run.py [--seeds N] [--output results.csv]
-
-Defaults: 5 seeds, output to batch_results.csv
-"""
-
 import argparse
 import csv
 import os
@@ -30,29 +19,14 @@ PARAMETERS_CSV = "parameters.csv"
 PLANES_SUMMARY_CSV = "planes_summary.csv"
 GSE_SUMMARY_CSV = "GSE_summary.csv"
 
-# =============================================================================
-# BATCH PARAMETERS  (change here)
-# =============================================================================
-N_SEEDS    = 114                # number of paired runs (seeds 0 … N_SEEDS-1)
-N_WORKERS  = max(1, os.cpu_count() - 1)  # parallel workers; -1 leaves one core for the OS
-OUTPUT_CSV = "batch_results.csv" # filename inside the batch folder
-# =============================================================================
+# Batch parameters
+N_SEEDS    = 114
+N_WORKERS  = max(1, os.cpu_count() - 1)  # leave one core for the OS
+OUTPUT_CSV = "batch_results.csv"
 
 
-# =============================================================================
-# LOG PARSER  (2.2)
-# =============================================================================
-
+# Parses a run log file and extracts simulation metrics into a dict
 def parse_log(log_path: Path) -> dict:
-    """
-    Parse a run log file. Returns:
-      gse_type    : "electric" or "gas"
-      mean_tat    : float | None
-      total_tat   : float | None
-      n_completed : int
-      flights     : list of {id, tat, wait_unload, wait_load}
-      gse_energy  : list of {id, energy_pct, tasks}
-    """
     text = log_path.read_text()
 
     result = {
@@ -137,10 +111,7 @@ def parse_log(log_path: Path) -> dict:
     return result
 
 
-# =============================================================================
-# SILENCE HELPER  — suppresses run_me's terminal output during batch runs
-# =============================================================================
-
+# Context manager that suppresses all terminal output during a block
 @contextmanager
 def _silence():
     devnull = open(os.devnull, "w")
@@ -153,15 +124,12 @@ def _silence():
         devnull.close()
 
 
-# =============================================================================
-# WORKER  — runs one seed in the configured GSE mode (electric or gas)
-# =============================================================================
-
+# Runs a single seed in the configured GSE mode and returns a result dict
 def _run_seed(seed: int, batch_dir_str: str) -> dict:
     batch_dir = Path(batch_dir_str)
 
     with _silence():
-        import run_me  # imported fresh per worker process
+        import run_me
 
     if run_me.GSE_ELECTRIC:
         charge_duration = 15.0
@@ -179,14 +147,17 @@ def _run_seed(seed: int, batch_dir_str: str) -> dict:
     )
     with _silence():
         run_me.run_simulation(
+            run_me.GSE_COUNT,
+            run_me.GSE_SPEED,
+            run_me.AUCTION_ALPHA,
+            run_me.AUCTION_BETA,
             charge_duration,
             consumption,
             label,
-            log_filepath=log_path,
             gse_spawn_config=spawn_cfg,
+            log_filepath=log_path,
             enable_visualization=False,
             pace=False,
-            show_status=False,
         )
 
     parsed = parse_log(log_path)
@@ -211,10 +182,7 @@ def _run_seed(seed: int, batch_dir_str: str) -> dict:
     }
 
 
-# =============================================================================
-# PROGRESS BAR
-# =============================================================================
-
+# Returns a progress bar string for console output
 def _bar(done: int, total: int, width: int = 30) -> str:
     filled = round(width * done / total) if total else 0
     return f"[{'█' * filled}{'░' * (width - filled)}]"
@@ -224,10 +192,10 @@ def _fmt_duration(seconds: float) -> str:
     return str(timedelta(seconds=round(seconds)))
 
 
+# Appends rows to a CSV file, writing the header only if the file is new/empty
 def _append_csv_rows(csv_path: Path, rows: list[dict]) -> None:
     if not rows:
         return
-
     write_header = not csv_path.exists() or csv_path.stat().st_size == 0
     with open(csv_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
@@ -236,13 +204,7 @@ def _append_csv_rows(csv_path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def _parameters_row(
-    seed: int,
-    log_name: str,
-    parsed: dict,
-    auction_alpha: float,
-    auction_beta: float,
-) -> dict:
+def _parameters_row(seed, log_name, parsed, auction_alpha, auction_beta) -> dict:
     return {
         "seed": seed,
         "gse_type": parsed["gse_type"],
@@ -260,10 +222,9 @@ def _parameters_row(
     }
 
 
-def _plane_rows(seed: int, log_name: str, parsed: dict) -> list[dict]:
-    rows = []
-    for flight in parsed["flights"]:
-        rows.append({
+def _plane_rows(seed, log_name, parsed) -> list[dict]:
+    return [
+        {
             "seed": seed,
             "gse_type": parsed["gse_type"],
             "log_file": log_name,
@@ -272,27 +233,27 @@ def _plane_rows(seed: int, log_name: str, parsed: dict) -> list[dict]:
             "turnaround_time_min": flight["tat"],
             "wait_unload_min": flight["wait_unload"],
             "wait_load_min": flight["wait_load"],
-        })
-    return rows
+        }
+        for flight in parsed["flights"]
+    ]
 
 
-def _gse_rows(seed: int, log_name: str, parsed: dict) -> list[dict]:
-    rows = []
-    for gse in parsed["gse_energy"]:
-        rows.append({
+def _gse_rows(seed, log_name, parsed) -> list[dict]:
+    return [
+        {
             "seed": seed,
             "gse_type": parsed["gse_type"],
             "log_file": log_name,
             "gse_id": gse["id"],
             "total_energy_consumed_pct": gse["energy"],
             "tasks_completed": gse["tasks"],
-        })
-    return rows
+        }
+        for gse in parsed["gse_energy"]
+    ]
 
 
-def _write_batch_summary_header(summary_log: Path, batch_dir: Path, n_seeds: int,
-                                effective_workers: int, output_csv: Path, batch_ts: str,
-                                gse_type: str) -> None:
+def _write_batch_summary_header(summary_log, batch_dir, n_seeds, effective_workers,
+                                output_csv, batch_ts, gse_type) -> None:
     summary_log.write_text(
         "\n".join([
             "=" * 60,
@@ -309,7 +270,7 @@ def _write_batch_summary_header(summary_log: Path, batch_dir: Path, n_seeds: int
     )
 
 
-def _append_batch_summary_row(summary_log: Path, row: dict) -> None:
+def _append_batch_summary_row(summary_log, row) -> None:
     with open(summary_log, "a") as f:
         f.write(
             f"{row['seed']},"
@@ -320,7 +281,7 @@ def _append_batch_summary_row(summary_log: Path, row: dict) -> None:
         )
 
 
-def _write_batch_summary_footer(summary_log: Path, rows: list[dict], total_wall: str) -> None:
+def _write_batch_summary_footer(summary_log, rows, total_wall) -> None:
     valid_tats = [r["mean_tat"] for r in rows if r["mean_tat"] is not None]
     overall_avg = sum(valid_tats) / len(valid_tats) if valid_tats else float("nan")
     total_completed = sum(r["n_completed"] for r in rows)
@@ -337,10 +298,7 @@ def _write_batch_summary_footer(summary_log: Path, rows: list[dict], total_wall:
         )
 
 
-# =============================================================================
-# BATCH RUNNER  (2.1)
-# =============================================================================
-
+# Runs all seeds in parallel, writes per-seed CSVs incrementally, and prints a live progress bar
 def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
     import run_me as _rm
     gse_type = "electric" if _rm.GSE_ELECTRIC else "gas"
@@ -357,7 +315,9 @@ def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
     parameters_csv = batch_dir / PARAMETERS_CSV
     planes_summary_csv = batch_dir / PLANES_SUMMARY_CSV
     gse_summary_csv = batch_dir / GSE_SUMMARY_CSV
-    _write_batch_summary_header(summary_log, batch_dir, n_seeds, effective_workers, output_csv, batch_ts, gse_type)
+
+    _write_batch_summary_header(summary_log, batch_dir, n_seeds, effective_workers,
+                                output_csv, batch_ts, gse_type)
     LATEST_BATCH_FILE.write_text(
         f"{batch_dir}\n"
         f"results_csv={output_csv}\n"
@@ -417,10 +377,6 @@ def batch_run(n_seeds: int, n_workers: int, output_csv: Path) -> None:
     print(f"GSE summary CSV: {gse_summary_csv}")
     print(f"Latest batch pointer: {LATEST_BATCH_FILE}")
 
-
-# =============================================================================
-# ENTRY POINT
-# =============================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
