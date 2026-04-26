@@ -104,7 +104,7 @@ def _advance(gse):
     gse.current_node = n
     gse.position = gse.nodes_dict[gse.current_node]["xy_pos"]
 
-# Load simple graph
+# Load simple graph and biding values for tests
 NODES, EDGES, GRAPH, H = load_simple_graph()
 CHARGING = [4, 5]
 ALPHA, BETA = 0.7, 0.3

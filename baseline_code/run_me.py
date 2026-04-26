@@ -18,15 +18,16 @@ from Plane import load_plane_schedule, build_plane_schedule_lookup, spawn_planes
 from Fleet_manager import Fleet_manager
 from auction_system import AuctionSystem
 from cbs import resolve_conflicts  # <-- IMPORTED CBS MODULE
+from visualization import map_running
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 LOG_DIR  = PROJECT_ROOT / "run logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# =============================================================================
-# SIMULATION PARAMETERS  (edit here)
-# =============================================================================
+# ---------------------------------
+# SIMULATION PARAMETERS  
+# ---------------------------------
 nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
 plane_data_file = "Data/airport_schedule_24h.xlsx"
@@ -60,9 +61,9 @@ render_every_n_steps = 1
 status_print_interval = 10  # set to 1 for every step, higher for less output
 
 
-# =============================================================================
+# -------------------------
 # FUNCTION DEFINITIONS  
-# =============================================================================
+# -------------------------
 
 def import_layout(nodes_file, edges_file):
     def resolve_path(path_like):
@@ -169,6 +170,7 @@ def assign_service_tasks(active_planes, auctioned_tasks, auction_system, heurist
 
 
 def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
+    # Random spawn configuration for GSEs. Spawns GSEs on random non-gate nodes at t=0.
     candidate_nodes = [
         node_id
         for node_id, node_props in nodes_dict.items()
@@ -188,8 +190,7 @@ def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
 
 
 def render_simulation_frame(map_properties, gse_lst, active_planes, t):
-    from visualization import map_running
-
+  # renders the current simulation state to the screen using the visualization module
     current_states = {}
     for gse in gse_lst:
         current_states[gse.id] = {
@@ -212,7 +213,9 @@ def pace_simulation(sim_minutes, real_seconds_per_pseudo_minute, simulation_star
     if remaining_sleep > 0:
         timer.sleep(remaining_sleep)
 
-
+# ------------------
+# Logging/ printing functions
+# -------------------
 def write_run_log(log_dir, gse_lst, plane_schedule, simulation_duration_hours, gse_speed,
                   gse_type_label, filepath=None):
     log_dir = Path(log_dir)
