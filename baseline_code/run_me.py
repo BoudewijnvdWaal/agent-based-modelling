@@ -25,7 +25,7 @@ LOG_DIR  = PROJECT_ROOT / "run logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # =============================================================================
-# SIMULATION PARAMETERS  (pas hier aan)
+# SIMULATION PARAMETERS  (edit here)
 # =============================================================================
 nodes_file = "Data/nodes_EHAM.xlsx"
 edges_file = "Data/edges_EHAM.xlsx"
@@ -33,35 +33,35 @@ plane_data_file = "Data/airport_schedule_24h.xlsx"
 
 simulation_duration_hours = 24
 
-# Service- en vertrektijden van vliegtuigen, in pseudo-minuten
+# Aircraft service and departure timings, in pseudo-minutes
 unloading_duration_minutes = 15
 loading_duration_minutes = 15
 departure_delay_minutes = 5
 
-# --- [NIEUW] GSE configuratie ---
+# --- GSE configuration ---
 GSE_COUNT = 8
 GSE_RANDOM_SEED = None
-GSE_SPEED = 4.0    # rijsnelheid van alle GSEs; batterijverbruik schaalt automatisch mee
-GSE_ELECTRIC = True  # True = elektrisch (charge_duration=60 min, consumption=0.83%/unit)
-               #       False = verbrandingsmotor (charge_duration=10 min, consumption=0.14%/unit)
+GSE_SPEED = 4.0    # driving speed for all GSEs; battery drain scales with speed
+GSE_ELECTRIC = True  # True = electric (charge_duration=60 min, consumption=0.83%/unit)
+               #       False = combustion engine (charge_duration=10 min, consumption=0.14%/unit)
 
-# Auction wegingen (genormaliseerde bid-componenten)
+# Auction weights (normalized bid components)
 AUCTION_ALPHA = 0.7
 AUCTION_BETA = 0.3
 
-# Visualisatie
+# Visualization
 plot_graph         = False
 visualization      = True
 real_minutes_per_pseudo_hour = 0.1  # 12 pseudo-hours -> 12 real minutes
-gse_visual_max_step_distance = 0.2  # lagere waarde = vloeiendere GSE-beweging op het scherm
+gse_visual_max_step_distance = 0.2  # lower value = smoother on-screen GSE movement
 render_every_n_steps = 1
 
-# GSE status tabel: print elke N simulatiestappen naar de terminal
-status_print_interval = 10  # zet op 1 voor elke stap, hoger voor minder output
+# GSE status table: print every N simulation steps to the terminal
+status_print_interval = 10  # set to 1 for every step, higher for less output
 
 
 # =============================================================================
-# FUNCTIE-DEFINITIES  
+# FUNCTION DEFINITIONS  
 # =============================================================================
 
 def import_layout(nodes_file, edges_file):
@@ -146,6 +146,8 @@ def create_graph(nodes_dict, edges_dict, plot_graph=True):
 
 
 def assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t):
+    # Prevent auctioning the same service type for the same plane multiple times
+    # within the same phase.
     unassigned_planes = [
         plane
         for plane in active_planes
@@ -176,6 +178,7 @@ def build_random_gse_spawn_config(nodes_dict, gse_count, seed=None):
         raise ValueError("No non-gate nodes available for random GSE spawning.")
 
     rng = random.Random(seed)
+    # Sample without replacement if enough start nodes exist, otherwise with replacement.
     if gse_count <= len(candidate_nodes):
         spawn_nodes = rng.sample(candidate_nodes, gse_count)
     else:
@@ -332,7 +335,7 @@ def print_gse_status_table(gse_lst, t, prev_line_count=0):
     return len(lines)
 
 # =============================================================================
-# INITIALISATIE 
+# INITIALIZATION 
 # =============================================================================
 nodes_dict, edges_dict = import_layout(nodes_file, edges_file)
 graph      = create_graph(nodes_dict, edges_dict, plot_graph)
@@ -351,7 +354,7 @@ print(f"[Init] Oplaadstations gevonden: nodes {charging_node_ids}")
 
 
 # =============================================================================
-# SIMULATIEFUNCTIE
+# SIMULATION FUNCTION
 # =============================================================================
 def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_duration, base_consumption_rate, gse_type_label, simulation_duration_hours=24, log_filepath=None,
                    gse_spawn_config=None, *, enable_visualization=None, pace=True,
@@ -481,8 +484,10 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
 
         fleet_manager.update_gate_status(active_planes, aircraft_lst=gse_lst, t=t)
 
+        # First auction round: assign tasks for planes that currently need service.
         assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
+        # Track load per charging node so go_charge can account for congestion.
         charging_load = {}
         for gse in gse_lst:
             if gse.status == "charging" or (gse.status == "taxiing" and gse.task_stage == "to_depot"):
@@ -517,6 +522,8 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
         if should_render_step:
             taxiing_gses = [gse for gse in gse_lst if gse.status == "taxiing"]
             if taxiing_gses:
+                # Split one simulation step into smaller render steps for smooth animation,
+                # without changing the simulation's logical dt.
                 max_step_distance = max(gse.speed * dt for gse in taxiing_gses)
                 movement_substeps = max(1, math.ceil(max_step_distance / gse_visual_max_step_distance))
 
@@ -549,9 +556,12 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
                     f"Unload-release GSE {plane.load_release_gse_id} for plane {plane.id} not found."
                 )
             if unloading_gse.position != plane.xy_pos:
+                # Loading can only start after the unload GSE has physically left the gate.
                 plane.release_for_loading()
                 print(f"[Plane {plane.id}] t={t}: unloading GSE left gate, loading can now be assigned")
 
+        # Second auction round: newly released load tasks can still be assigned
+        # in the same tick.
         assign_service_tasks(active_planes, auctioned_tasks, auction_system, heuristics, nodes_dict, t)
 
         plane_by_id = {plane.id: plane for plane in active_planes}
@@ -617,7 +627,7 @@ def run_simulation(gse_count, gse_speed, auction_alpha, auction_beta, charge_dur
 
 
 # =============================================================================
-# UITVOERING
+# EXECUTION
 # =============================================================================
 if __name__ == "__main__":
     if GSE_ELECTRIC:

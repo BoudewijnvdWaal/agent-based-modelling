@@ -1,12 +1,12 @@
 class AuctionSystem:
     def __init__(self, gse_list, alpha=1.0, beta=1.0, max_shortest_path_distance=1.0):
         """
-        Initialiseert het veiling systeem.
+        Initialize the auction system.
         INPUT:
-            - gse_list: Lijst met beschikbare GSE objecten
-            - alpha: gewicht voor genormaliseerde afstand
-            - beta: gewicht voor genormaliseerde SoC-penalty
-            - max_shortest_path_distance: vaste normalisatieschaal voor afstand
+            - gse_list: list of available GSE objects
+            - alpha: weight for normalized distance
+            - beta: weight for normalized SoC penalty
+            - max_shortest_path_distance: fixed normalization scale for distance
         """
         self.gse_list = gse_list
         self.alpha = float(alpha)
@@ -15,16 +15,16 @@ class AuctionSystem:
 
     def allocate_tasks(self, unassigned_tasks, heuristics):
         """
-        Verdeelt taken onder de GSE's op basis van hun biedingen.
+        Assign tasks to GSEs based on bids.
         INPUT:
-            - unassigned_tasks: Lijst met plane-objecten of gate_node_ids die service nodig hebben
-            - heuristics: De voorgecalculeerde afstanden tussen alle nodes
+            - unassigned_tasks: list of Plane objects or gate_node_ids needing service
+            - heuristics: precomputed distances between all nodes
         RETURNS:
-            - assignments: Een lijst met tuples (gse_agent, task)
+            - assignments: a list of tuples (gse_agent, task)
         """
         assignments = []
         
-        # We veilen elke taak één voor één (Sequential Single-Item Auction)
+        # Auction each task one by one (Sequential Single-Item Auction)
         for task in unassigned_tasks:
             task_node_id = getattr(task, "node_id", task)
             task_id = getattr(task, "id", task_node_id)
@@ -39,7 +39,7 @@ class AuctionSystem:
             best_bid = float('inf')
             winner = None
             
-            # Vraag elke beschikbare GSE om een bod
+            # Request a bid from each available GSE
             for gse in self.gse_list:
                 if gse.status == "available":
                     bid = gse.calculate_bid(
@@ -55,14 +55,14 @@ class AuctionSystem:
                         best_bid = bid
                         winner = gse
             
-            # Als we een winnaar hebben, wijs de taak toe
+            # If a winner exists, assign the task
             if winner:
                 assignments.append((winner, task))
-                # Zet de status van de winnaar op taxiing zodat hij niet op de volgende taak biedt in deze ronde
+                # Set winner status to taxiing so it cannot bid again in this round
                 winner.status = "taxiing"
                 winner.assigned_plane_id = task_id
                 winner.assigned_service_type = task_type
                 service_label = f" ({task_type})" if task_type else ""
-                print(f"[Auction] Taak bij gate {task_node_id}{service_label} toegewezen aan GSE {winner.id} met bod {best_bid:.2f}")
+                print(f"[Auction] Task at gate {task_node_id}{service_label} assigned to GSE {winner.id} with bid {best_bid:.2f}")
         
         return assignments
