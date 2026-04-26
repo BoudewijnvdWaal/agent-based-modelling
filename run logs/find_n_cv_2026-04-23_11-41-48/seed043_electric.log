@@ -1,0 +1,94 @@
+
+============================================================
+SIMULATION RUN LOG
+GSE type   : ELECTRIC
+Date/time  : 2026-04-23 11:43:05
+Duration   : 24 hours (1440 min)
+GSE count  : 8  |  speed: 4.0
+GSE params : charge_duration=15 min  |  base_consumption=0.5%/unit
+============================================================
+
+FLIGHT TIMES
+  Flight        Turnaround   Wait unload    Wait load
+  -----------------------------------------------------
+  AA4769            68.0 min         9.0 min       24.0 min
+  AA9643            92.0 min        44.0 min       13.0 min
+  AF2542            83.0 min         4.0 min       44.0 min
+  AF4102            52.0 min         3.0 min       14.0 min
+  AY2636            59.0 min         0.0 min       24.0 min
+  AY4214           172.0 min       118.0 min       19.0 min
+  BA4433           114.0 min        54.0 min       25.0 min
+  BA5818            52.0 min         3.0 min       14.0 min
+  DL135             59.0 min         4.0 min       20.0 min
+  DL2244           104.0 min        18.0 min       51.0 min
+  DL4445            47.0 min         2.0 min       10.0 min
+  EK1031            97.0 min        33.0 min       29.0 min
+  EK1222           148.0 min        77.0 min       36.0 min
+  EK7279            61.0 min         2.0 min       24.0 min
+  ET7911           104.0 min        50.0 min       19.0 min
+  ET8665           109.0 min        34.0 min       40.0 min
+  ET8983            98.0 min         7.0 min       56.0 min
+  IB4451           113.0 min        14.0 min       64.0 min
+  IB6715           132.0 min        78.0 min       19.0 min
+  IB9585            90.0 min         5.0 min       50.0 min
+  KL1300            55.0 min         2.0 min       18.0 min
+  KL1853           153.0 min        53.0 min       65.0 min
+  KL9433           190.0 min        83.0 min       72.0 min
+  LH1932           207.0 min       134.0 min       38.0 min
+  LH7608            65.0 min         0.0 min       30.0 min
+  LH9186           114.0 min        47.0 min       32.0 min
+  LX2188            52.0 min         3.0 min       14.0 min
+  LX4633           124.0 min        76.0 min       13.0 min
+  LX9205            48.0 min         1.0 min       12.0 min
+  LX9289           228.0 min       128.0 min       65.0 min
+  LX9662           148.0 min        83.0 min       30.0 min
+  MS1412           100.0 min        53.0 min       12.0 min
+  MS4445            69.0 min         6.0 min       28.0 min
+  MS8801            89.0 min        26.0 min       28.0 min
+  OS1288            86.0 min         0.0 min       51.0 min
+  OS2243           155.0 min        89.0 min       31.0 min
+  OS3435           145.0 min        67.0 min       43.0 min
+  OS4372           116.0 min         3.0 min       78.0 min
+  QF1797            96.0 min         7.0 min       54.0 min
+  QF7591           123.0 min         7.0 min       81.0 min
+  RJ2526        incomplete        57.0 min       31.0 min
+  RJ2646           143.0 min        66.0 min       42.0 min
+  RJ3592            61.0 min         6.0 min       20.0 min
+  RJ5056            71.0 min         1.0 min       35.0 min
+  RJ690             88.0 min        34.0 min       19.0 min
+  SA1213           115.0 min        50.0 min       30.0 min
+  SA1443           137.0 min        85.0 min       17.0 min
+  SA3550           168.0 min        42.0 min       91.0 min
+  SA751            100.0 min        43.0 min       22.0 min
+  SA8766            71.0 min         9.0 min       27.0 min
+  SA9324            74.0 min        16.0 min       23.0 min
+  SK1058            51.0 min         0.0 min       16.0 min
+  SK4961            70.0 min         0.0 min       35.0 min
+  SK5247           179.0 min        84.0 min       60.0 min
+  SK6670            54.0 min         1.0 min       18.0 min
+  SN4773            64.0 min         1.0 min       28.0 min
+  SN9138           195.0 min       124.0 min       36.0 min
+  TK2747           194.0 min        98.0 min       61.0 min
+  TK4716           184.0 min        45.0 min      104.0 min
+  TK8380           166.0 min        75.0 min       56.0 min
+  UA158            150.0 min         0.0 min      115.0 min
+  UA1612           186.0 min       126.0 min       25.0 min
+  UA2797            58.0 min         3.0 min       20.0 min
+  UA5150        incomplete         8.0 min   incomplete
+  UA5238            68.0 min         0.0 min       33.0 min
+  UA921            152.0 min        51.0 min       66.0 min
+  -----------------------------------------------------
+  Total (64 completed)      7016.0 min
+  Average          109.6 min
+
+GSE UTILIZATION  (cumulative battery % consumed  |  tasks completed)
+------------------------------------------------------------
+  GSE 1       586.0%  [################---------]  tasks: 12
+  GSE 2       714.0%  [###################------]  tasks: 15
+  GSE 3       842.0%  [#######################--]  tasks: 18
+  GSE 4       822.0%  [######################---]  tasks: 16
+  GSE 5       834.0%  [#######################--]  tasks: 16
+  GSE 6       920.0%  [#########################]  tasks: 14
+  GSE 7       754.0%  [####################-----]  tasks: 10
+  GSE 8       444.0%  [############-------------]  tasks: 6
+============================================================
