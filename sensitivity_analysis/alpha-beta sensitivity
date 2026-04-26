@@ -1,11 +1,13 @@
 import os
 import sys
+import time
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+import mpl_toolkits.mplot3d  # noqa: F401  — registers projection='3d'
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import timedelta
 
 # =============================================================================
 # PADEN EN IMPORTS
@@ -19,7 +21,7 @@ if str(baseline_path) not in sys.path:
 
 try:
     import run_me
-    from batch_run import _silence
+    from batch_run import _silence, _bar
     print(f"Systeem: Modules succesvol geladen uit {baseline_path}")
 except ImportError as e:
     print(f"FOUT: Kan baseline_code niet laden.\nDetails: {e}")
@@ -28,93 +30,137 @@ except ImportError as e:
 # =============================================================================
 # CONFIGURATIE
 # =============================================================================
-VALUES = [0.2, 0.4, 0.6, 0.8, 1.0]
+VALUES = [round(v, 1) for v in np.arange(0.1, 1.1, 0.1)]
 N_SEEDS_PER_CELL = 114
-N_WORKERS = max(1, os.cpu_count() - 1)
+N_WORKERS = os.cpu_count()
 
-# Map voor eventuele plots
 OUTPUT_DIR = current_dir / "sensitivity_outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-def run_single_combination(alpha, beta):
-    """Draait de simulatie en pakt DIRECT de return value."""
-    # Instellingen overnemen uit run_me
-    label = "electric" if run_me.GSE_ELECTRIC else "gas"
+# =============================================================================
+# WORKER FUNCTION — one job per (alpha, beta, seed)
+# =============================================================================
+def run_single_seed(alpha, beta, seed):
+    label      = "electric" if run_me.GSE_ELECTRIC else "gas"
     charge_dur = 60.0 if run_me.GSE_ELECTRIC else 10.0
-    cons_rate = 0.83 if run_me.GSE_ELECTRIC else 0.14
-    
-    tats = []
-    for seed in range(N_SEEDS_PER_CELL):
-        spawn_cfg = run_me.build_random_gse_spawn_config(
-            run_me.nodes_dict, run_me.GSE_COUNT, seed=seed
-        )
-        
-        try:
-            with _silence():
-                # We vangen de return dictionary direct op!
-                result = run_me.run_simulation(
-                    gse_count=run_me.GSE_COUNT,
-                    gse_speed=run_me.GSE_SPEED,
-                    auction_alpha=alpha,
-                    auction_beta=beta,
-                    charge_duration=charge_dur,
-                    base_consumption_rate=cons_rate,
-                    gse_type_label=label,
-                    simulation_duration_hours=run_me.simulation_duration_hours,
-                    log_filepath=None, # Geen log nodig, we hebben de data al
-                    gse_spawn_config=spawn_cfg,
-                    enable_visualization=False,
-                    pace=False,
-                    show_status=False
-                )
-            
-            if result and result['mean_tat'] is not None:
-                tats.append(result['mean_tat'])
-        except Exception as e:
-            # Print error alleen als het echt misgaat
-            print(f"Fout bij a={alpha}, b={beta}: {e}")
+    cons_rate  = 0.83 if run_me.GSE_ELECTRIC else 0.14
 
-    avg_tat = np.mean(tats) if tats else np.nan
-    return alpha, beta, avg_tat
+    spawn_cfg = run_me.build_random_gse_spawn_config(
+        run_me.nodes_dict, run_me.GSE_COUNT, seed=seed
+    )
+
+    with _silence():
+        result = run_me.run_simulation(
+            gse_count=run_me.GSE_COUNT,
+            gse_speed=run_me.GSE_SPEED,
+            auction_alpha=alpha,
+            auction_beta=beta,
+            charge_duration=charge_dur,
+            base_consumption_rate=cons_rate,
+            gse_type_label=label,
+            simulation_duration_hours=run_me.simulation_duration_hours,
+            log_filepath=None,
+            gse_spawn_config=spawn_cfg,
+            enable_visualization=False,
+            pace=False
+        )
+
+    mean_tat = result['mean_tat'] if result else None
+    return alpha, beta, mean_tat
 
 # =============================================================================
 # HOOFDPROGRAMMA
 # =============================================================================
 if __name__ == "__main__":
+    jobs  = [(a, b, s) for a in VALUES for b in VALUES for s in range(N_SEEDS_PER_CELL)]
+    total = len(jobs)
     print(f"--- Sensitiviteitsanalyse Gestart ---")
-    print(f"Dit gaat ongeveer {len(VALUES)**2} combinaties draaien...")
+    print(f"Running {len(VALUES)**2} alpha/beta combos × {N_SEEDS_PER_CELL} seeds = {total} jobs on {N_WORKERS} CPUs\n")
 
-    results_list = []
-    combinations = [(a, b) for a in VALUES for b in VALUES]
-    
+    results_acc = {(a, b): [] for a in VALUES for b in VALUES}
+    start = time.monotonic()
+    done  = 0
+
     with ProcessPoolExecutor(max_workers=N_WORKERS) as executor:
-        futures = {executor.submit(run_single_combination, a, b): (a, b) for a, b in combinations}
-        
-        for i, future in enumerate(as_completed(futures), 1):
-            alpha, beta, avg_tat = future.result()
-            results_list.append({"Alpha": alpha, "Beta": beta, "Avg_TAT": avg_tat})
-            
-            res_display = f"{avg_tat:.2f} min" if not np.isnan(avg_tat) else "FAILED"
-            print(f"[{i:2d}/25] Alpha={alpha}, Beta={beta} -> Gem. TAT: {res_display}")
+        futures = [executor.submit(run_single_seed, a, b, s) for a, b, s in jobs]
 
-    # DataFrame maken
+        for future in as_completed(futures):
+            alpha, beta, mean_tat = future.result()
+            if mean_tat is not None:
+                results_acc[(alpha, beta)].append(mean_tat)
+            done += 1
+
+            elapsed = time.monotonic() - start
+            eta = (elapsed / done) * (total - done)
+            sys.stdout.write(
+                f"\r  {_bar(done, total)}  {done}/{total} seeds"
+                f"  elapsed: {timedelta(seconds=round(elapsed))}"
+                f"  ETA: {timedelta(seconds=round(eta))}"
+            )
+            sys.stdout.flush()
+
+    sys.stdout.write("\n")
+
+    # Aggregate per (alpha, beta)
+    results_list = [
+        {"Alpha": a, "Beta": b, "Avg_TAT": np.mean(tats) if tats else np.nan}
+        for (a, b), tats in sorted(results_acc.items())
+    ]
     df = pd.DataFrame(results_list)
     df.to_csv(OUTPUT_DIR / "sensitivity_results.csv", index=False)
 
-    # Heatmap genereren
+    # ==========================================================================
+    # HEATMAP
+    # ==========================================================================
     if not df['Avg_TAT'].isnull().all():
-        plt.figure(figsize=(10, 8))
         pivot_table = df.pivot(index="Alpha", columns="Beta", values="Avg_TAT")
-        pivot_table = pivot_table.sort_index(ascending=False) # Hoogste Alpha boven
-        
-        sns.heatmap(pivot_table, annot=True, fmt=".2f", cmap="RdYlGn_r") # Rood is hoog (slecht), groen is laag (goed)
-        plt.title("Gevoeligheidsanalyse: Effect van Alpha & Beta op TAT")
-        plt.xlabel("Beta (Gewicht op Afstand)")
-        plt.ylabel("Alpha (Gewicht op Tijd)")
-        
+        pivot_table = pivot_table.sort_index(ascending=False)
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        im = ax.imshow(pivot_table.values, cmap="RdYlGn_r", aspect="auto")
+        fig.colorbar(im, ax=ax, label="Avg TAT (min)")
+
+        ax.set_xticks(range(len(pivot_table.columns)))
+        ax.set_yticks(range(len(pivot_table.index)))
+        ax.set_xticklabels([f"{v:.1f}" for v in pivot_table.columns])
+        ax.set_yticklabels([f"{v:.1f}" for v in pivot_table.index])
+
+        for row in range(len(pivot_table.index)):
+            for col in range(len(pivot_table.columns)):
+                val = pivot_table.values[row, col]
+                ax.text(col, row, f"{val:.2f}", ha="center", va="center", fontsize=7)
+
+        ax.set_title("Gevoeligheidsanalyse: Effect van Alpha & Beta op TAT")
+        ax.set_xlabel("Beta (Gewicht op Afstand)")
+        ax.set_ylabel("Alpha (Gewicht op Tijd)")
+
         plot_path = OUTPUT_DIR / "alpha_beta_heatmap.png"
-        plt.savefig(plot_path)
+        fig.savefig(plot_path, bbox_inches='tight')
         print(f"\nSucces! Heatmap opgeslagen als: {plot_path}")
+        plt.show()
+
+        # ======================================================================
+        # 3D SURFACE PLOT
+        # ======================================================================
+        pivot_3d = df.pivot(index="Alpha", columns="Beta", values="Avg_TAT").sort_index()
+        B = pivot_3d.columns.values.astype(float)
+        A = pivot_3d.index.values.astype(float)
+        B_grid, A_grid = np.meshgrid(B, A)
+        Z = pivot_3d.values.astype(float)
+
+        fig = plt.figure(figsize=(12, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        surf = ax.plot_surface(B_grid, A_grid, Z, cmap="RdYlGn_r", edgecolor='none', alpha=0.9)
+        ax.contourf(B_grid, A_grid, Z, zdir='z', offset=np.nanmin(Z) - 2, cmap="RdYlGn_r", alpha=0.5)
+        fig.colorbar(surf, ax=ax, shrink=0.5, label="Avg TAT (min)")
+        ax.set_xlabel("Beta (Distance Weight)")
+        ax.set_ylabel("Alpha (Time Weight)")
+        ax.set_zlabel("Avg TAT (min)")
+        ax.set_title("Sensitivity Analysis: Alpha & Beta vs TAT (3D)")
+
+        plot_3d_path = OUTPUT_DIR / "alpha_beta_3d_surface.png"
+        plt.savefig(plot_3d_path, dpi=150, bbox_inches='tight')
+        print(f"3D surface opgeslagen als: {plot_3d_path}")
         plt.show()
     else:
         print("\nFOUT: Geen data kunnen verzamelen voor de heatmap.")

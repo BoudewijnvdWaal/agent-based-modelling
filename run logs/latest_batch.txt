@@ -1,10 +1,10 @@
-/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_18-35-32
-results_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_18-35-32/batch_results.csv
-summary_log=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_18-35-32/batch_summary.log
-parameters_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_18-35-32/parameters.csv
-planes_summary_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_18-35-32/planes_summary.csv
-gse_summary_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_18-35-32/GSE_summary.csv
-created_at=2026-04-26_18-35-32
+/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59
+results_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59/batch_results.csv
+summary_log=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59/batch_summary.log
+parameters_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59/parameters.csv
+planes_summary_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59/planes_summary.csv
+gse_summary_csv=/Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59/GSE_summary.csv
+created_at=2026-04-26_21-03-59
 gse_type=gas
 seeds=114
 workers=7

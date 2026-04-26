@@ -7,7 +7,7 @@ from matplotlib.lines import Line2D
 from auction_system import AuctionSystem
 from GSE import GSE
 from single_agent_planner import calc_heuristics, simple_single_agent_astar
-from cbs import _replan_around, resolve_conflicts
+from PBS import _replan_around, resolve_conflicts
 
 BASE = Path(__file__).resolve().parent
 FIG_DIR = BASE / "Figures"

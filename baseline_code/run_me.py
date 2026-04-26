@@ -17,7 +17,7 @@ from GSE import GSE
 from Plane import load_plane_schedule, build_plane_schedule_lookup, spawn_planes
 from Fleet_manager import Fleet_manager
 from auction_system import AuctionSystem
-from cbs import resolve_conflicts
+from PBS import resolve_conflicts
 from visualization import map_running
 
 BASE_DIR = Path(__file__).resolve().parent

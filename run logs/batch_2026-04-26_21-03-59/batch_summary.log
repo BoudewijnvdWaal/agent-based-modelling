@@ -1,0 +1,21 @@
+============================================================
+BATCH RUN SUMMARY
+Created     : 2026-04-26_21-03-59
+GSE type    : gas
+Seeds       : 114
+Workers     : 7
+Batch dir   : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59
+Results CSV : /Users/jens/Documents/Master/Master Q3/Agent Based Modeling/agent-based-modelling/run logs/batch_2026-04-26_21-03-59/batch_results.csv
+------------------------------------------------------------
+seed,gse_type,mean_tat,n_completed,log_file
+4,gas,71.1,65,seed004_gas.log
+6,gas,72.3,65,seed006_gas.log
+1,gas,74.5,65,seed001_gas.log
+2,gas,75.5,65,seed002_gas.log
+5,gas,70.8,65,seed005_gas.log
+3,gas,75.5,65,seed003_gas.log
+0,gas,75.3,65,seed000_gas.log
+11,gas,76.4,65,seed011_gas.log
+9,gas,73.6,65,seed009_gas.log
+8,gas,75.2,65,seed008_gas.log
+7,gas,76.8,65,seed007_gas.log
