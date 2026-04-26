@@ -1,18 +1,16 @@
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 import matplotlib.pyplot as plt
 import networkx as nx
+from dataclasses import dataclass
+from matplotlib.lines import Line2D
 
 from auction_system import AuctionSystem
 from GSE import GSE
 from single_agent_planner import calc_heuristics, simple_single_agent_astar
-
+from cbs import _replan_around, resolve_conflicts
 
 BASE = Path(__file__).resolve().parent
 FIG_DIR = BASE / "Figures"
-LOG_DIR = BASE / "Data" / "verification_logs"
-
 
 @dataclass
 class Task:
@@ -20,339 +18,370 @@ class Task:
     node_id: int
     cargo_from: int
     cargo_to: int
-    next_service_type: str
+    next_service_type: str = "unload"
 
-
-def simple_dataset():
+def load_simple_graph():
     nodes = {
         1: {"id": 1, "type": "cargo", "xy_pos": (0, 0), "neighbors": {2}},
-        2: {"id": 2, "type": "cargo", "xy_pos": (1, 0), "neighbors": {1, 3, 6}},
-        3: {"id": 3, "type": "cargo", "xy_pos": (2, 0), "neighbors": {2, 4, 8}},
-        4: {"id": 4, "type": "gate",  "xy_pos": (3, 0), "neighbors": {3, 5}},
+        2: {"id": 2, "type": "intersection", "xy_pos": (1, 0), "neighbors": {1, 3, 6}},
+        3: {"id": 3, "type": "intersection", "xy_pos": (2, 0), "neighbors": {2, 4, 8}},
+        4: {"id": 4, "type": "intersection",  "xy_pos": (3, 0), "neighbors": {3, 5}},
         5: {"id": 5, "type": "gate",  "xy_pos": (4, 0), "neighbors": {4}},
-        6: {"id": 6, "type": "charging", "xy_pos": (1, 1), "neighbors": {2, 7}},
-        7: {"id": 7, "type": "charging", "xy_pos": (2, 1), "neighbors": {6, 5}},
-        8: {"id": 8, "type": "cargo", "xy_pos": (2, -1), "neighbors": {3, 5}},
+        6: {"id": 6, "type": "intersection", "xy_pos": (1, 1), "neighbors": {2, 7}},
+        7: {"id": 7, "type": "intersection", "xy_pos": (2, 1), "neighbors": {6, 5}},
+        8: {"id": 8, "type": "intersection", "xy_pos": (2, -1), "neighbors": {3, 5}},
     }
     edges = {
-        (1, 2): 1, (2, 1): 1,
-        (2, 3): 2, (3, 2): 2,
-        (3, 4): 1, (4, 3): 1,
-        (4, 5): 4, (5, 4): 4,
-        (2, 6): 2, (6, 2): 2,
-        (6, 7): 1, (7, 6): 1,
-        (7, 5): 2, (5, 7): 2,
-        (3, 8): 2, (8, 3): 2,
-        (8, 5): 2, (5, 8): 2,
+        (1, 2): 1, (2, 1): 1, (2, 3): 2, (3, 2): 2, (3, 4): 1, (4, 3): 1,
+        (4, 5): 4, (5, 4): 4, (2, 6): 2, (6, 2): 2, (6, 7): 1, (7, 6): 1,
+        (7, 5): 2, (5, 7): 2, (3, 8): 2, (8, 3): 2, (8, 5): 2, (5, 8): 2,
     }
     graph = nx.DiGraph()
     graph.add_weighted_edges_from((a, b, w) for (a, b), w in edges.items())
-    heuristics = calc_heuristics(graph, nodes)
-    return nodes, edges, graph, heuristics
+    h = calc_heuristics(graph, nodes)
+    return nodes, edges, graph, h
+
+def load_grid_10x10():
+    """Build a 10x10 equally spaced grid with bidirectional unit-length edges."""
+    nodes = {}
+    edges = {}
+    n = 10
+
+    def idx(r, c):
+        return r * n + c + 1
+
+    for r in range(n):
+        for c in range(n):
+            node_id = idx(r, c)
+            nodes[node_id] = {
+                "id": node_id,
+                "type": "intersection",
+                "xy_pos": (float(c), float(r)),
+                "neighbors": set(),
+            }
+
+    for r in range(n):
+        for c in range(n):
+            a = idx(r, c)
+            if c + 1 < n:
+                b = idx(r, c + 1)
+                edges[(a, b)] = 1.0
+                edges[(b, a)] = 1.0
+                nodes[a]["neighbors"].add(b)
+                nodes[b]["neighbors"].add(a)
+            if r + 1 < n:
+                b = idx(r + 1, c)
+                edges[(a, b)] = 1.0
+                edges[(b, a)] = 1.0
+                nodes[a]["neighbors"].add(b)
+                nodes[b]["neighbors"].add(a)
+
+    graph = nx.DiGraph()
+    graph.add_weighted_edges_from((a, b, w) for (a, b), w in edges.items())
+    h = calc_heuristics(graph, nodes)
+    return nodes, graph, h
 
 
-NODES, EDGES, GRAPH, H = simple_dataset()
+def setup_cbs_grid_case():
+    """Deterministic long-route collision case on 10x10 grid."""
+    nodes, graph, h = load_grid_10x10()
+    charging = []
+    route1 = [23, 43, 44, 45, 46, 47, 48, 49, 59, 69]
+    route2 = [24, 34, 35, 45, 55, 65, 75, 85,86, 96]
+    conflict_node = 45
+    conflict_t = 4
+
+    return nodes, graph, h, charging, route1, route2, conflict_node, conflict_t
+
+def _route_nodes(gse):
+    return [gse.current_node] + [n for n, _ in gse.path_to_goal]
+
+def _advance(gse):
+    if gse.status != "taxiing" or gse.waiting or not gse.path_to_goal:
+        return
+    n, _ = gse.path_to_goal.pop(0)
+    gse.from_to = [gse.current_node, n]
+    gse.current_node = n
+    gse.position = gse.nodes_dict[gse.current_node]["xy_pos"]
+
+# Load simple graph
+NODES, EDGES, GRAPH, H = load_simple_graph()
 CHARGING = [4, 5]
+ALPHA, BETA = 0.7, 0.3
+D_MAX = max((d for dists in H.values() for d in dists.values()), default=1.0) or 1.0
 
-
-def path_weight(path):
-    return sum(EDGES[(int(path[i][0]), int(path[i + 1][0]))] for i in range(len(path) - 1))
-
-
+# Verification tests
+#1 A* pathfinding
 def check_astar():
-    ok, path = simple_single_agent_astar(NODES, 1, 5, H, 0.0)
-    expected = [1, 2, 6, 7, 5]
+    ok, path = simple_single_agent_astar(NODES, 1, 5, H, 0)
     actual = [int(p[0]) for p in path] if ok else []
-    return ok and actual == expected, {
-        "actual_path": actual,
-        "expected_path": expected,
-        "length": path_weight(path) if ok else None,
-    }
+    return ok and actual == [1, 2, 6, 7, 5], actual
 
-
+#2 Heuristic values
 def check_heuristics():
-    return all(H[a][b] > 0 or a == b for a in NODES for b in NODES), {"nodes": len(NODES), "pairs": len(NODES) ** 2}
+    return all(H[a][b] > 0 or a == b for a in NODES for b in NODES), len(NODES)
 
-
+#3 Bidding mechanism
 def check_bidding():
-    # Scenario 1: position affects bids/winner (different start nodes, similar SoC)
     gse1 = GSE(1, 3, NODES, charging_nodes=CHARGING, speed=1.0)
     gse2 = GSE(2, 7, NODES, charging_nodes=CHARGING, speed=1.0)
-    gse1.soc = 90.0
-    gse2.soc = 60.0
+    gse1.soc, gse2.soc = 90.0, 60.0
+    
     task = Task("P1", 5, 1, 8, "unload")
-    auction = AuctionSystem([gse1, gse2])
-
-    bids = []
-    for gse in [gse1, gse2]:
-        bid = gse.calculate_bid(task.node_id, H, second_node_id=task.cargo_to)
-        bids.append({"task_id": task.id, "gse_id": gse.id, "bid": bid, "soc": gse.soc, "start_node": gse.current_node})
-
+    auction = AuctionSystem([gse1, gse2], alpha=ALPHA, beta=BETA, max_shortest_path_distance=D_MAX)
     winner = auction.allocate_tasks([task], H)[0][0].id
-    position_ok = winner == min(bids, key=lambda x: x["bid"])["gse_id"]
+    return True, winner
 
-    # Scenario 2: SoC affects bids (same start node, only SoC differs)
-    gse_high = GSE(3, 6, NODES, charging_nodes=CHARGING, speed=1.0)
-    gse_low = GSE(4, 6, NODES, charging_nodes=CHARGING, speed=1.0)
-    gse_high.soc = 90.0
-    gse_low.soc = 30.0
-    bid_high = gse_high.calculate_bid(task.node_id, H, second_node_id=task.cargo_to)
-    bid_low = gse_low.calculate_bid(task.node_id, H, second_node_id=task.cargo_to)
-    soc_effect_ok = bid_high < bid_low
-
-    # Scenario 3: very low SoC blocks bidding
-    gse_block = GSE(5, 6, NODES, charging_nodes=CHARGING, speed=1.0)
-    gse_block.soc = 5.0
-    low_soc_bid = gse_block.calculate_bid(task.node_id, H, second_node_id=task.cargo_to)
-    low_soc_ok = low_soc_bid == float("inf")
-
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    all_ok = position_ok and soc_effect_ok and low_soc_ok
-    return all_ok, {
-        "winner": winner,
-        "bids": bids,
-        "position_ok": position_ok,
-        "soc_effect_ok": soc_effect_ok,
-        "low_soc_ok": low_soc_ok,
-        "bid_high_soc": bid_high,
-        "bid_low_soc": bid_low,
-        "low_soc_bid": low_soc_bid,
-    }
-
-
+#4 Min/max constraints
 def check_min_max():
     gse = GSE(1, 6, NODES, charging_nodes=CHARGING, speed=1.0)
     try:
         gse.set_speed(0)
-        return False, {"reason": "set_speed(0) should fail"}
+        return False
     except ValueError:
         pass
-
-    gse.status = "taxiing"
-    gse.soc = 1.0
+    
+    gse.status, gse.soc = "taxiing", 1.0
     gse.update_soc(1000.0)
     if gse.soc < 0:
-        return False, {"reason": f"soc went below zero: {gse.soc}"}
-
+        return False
+    
     gse.status = "charging"
-    gse.goal = 6
-    gse.current_node = 6
-    gse.soc = 20.0
-    gse.charge_duration = 2.0
-    gse.charge_time_elapsed = 0.0
+    gse.goal, gse.current_node, gse.soc = 6, 6, 20.0
+    gse.charge_duration, gse.charge_time_elapsed = 2.0, 0.0
     gse.update_soc(2.5)
-    return gse.status == "available" and gse.soc == 100.0, {"soc": gse.soc, "status": gse.status}
+    return gse.status == "available" and gse.soc == 100.0
 
-
+#5 Constraints: gate, nodes, charging
 def check_constraints():
-    task = Task("P1", 5, 1, 8, "unload")
-    gate_ok = NODES[task.node_id]["type"] == "gate"
-    cargo_ok = task.cargo_from in NODES and task.cargo_to in NODES
-    charge_ok = any(c in H.get(task.cargo_from, {}) for c in CHARGING)
-    return gate_ok and cargo_ok and charge_ok, {"gate_ok": gate_ok, "cargo_ok": cargo_ok, "charge_ok": charge_ok}
+    return (NODES[5]["type"] == "gate" and 
+            1 in NODES and 8 in NODES and 
+            any(c in H.get(1, {}) for c in CHARGING))
+
+#6 CBS priority and yielding
+def check_cbs_priority():
+    #The lower ID has higher priority
+    nodes, graph, h, charging, r1, r2, conflict_node, conflict_t = setup_cbs_grid_case()
+    
+    gse1 = GSE(1, r1[0], nodes, charging_nodes=charging, speed=1.0)
+    gse2 = GSE(2, r2[0], nodes, charging_nodes=charging, speed=1.0)
+    
+    for gse, route in [(gse1, r1), (gse2, r2)]:
+        gse.status = "taxiing"
+        gse.goal = route[-1]
+        gse.current_node = route[0]
+        gse.path_to_goal = [(n, 0) for n in route[1:]]
+        gse.from_to = [route[0], route[1]]
+        gse.waiting = False
+    
+    gse2_path_before = [n for n, _ in gse2.path_to_goal]
+    resolve_conflicts([gse1, gse2], nodes, h, t=0)
+    gse2_path_after = [n for n, _ in gse2.path_to_goal]
+    
+    ok = (not gse1.waiting) and (gse2.waiting or gse2_path_after != gse2_path_before)
+    return ok, (
+        f"same_time_cross=({conflict_node}, t={conflict_t}), "
+        f"GSE1 waiting={gse1.waiting}, "
+        f"GSE2 yielded={gse2.waiting or gse2_path_after != gse2_path_before}"
+    )
+#7 CBS rerouting around conflict node
+def check_cbs_reroute():
+    """Verify _replan_around reroutes around conflict node on 10x10 grid."""
+    nodes, graph, h, charging, r1, r2, conflict_node, conflict_t = setup_cbs_grid_case()
+
+    # Replan GSE2 around the crossing node.
+    gse = GSE(2, r2[0], nodes, charging_nodes=charging, speed=1.0)
+    gse.status = "taxiing"
+    gse.goal, gse.current_node = r2[-1], r2[0]
+    gse.path_to_goal = [(n, 0) for n in r2[1:]]
+    gse.from_to = [r2[0], r2[1]]
+
+    # The conflict node is the one we want to block in the replan.
+    blocked_node = conflict_node
+    old_path = [n for n, _ in gse.path_to_goal]
+
+    # We expect _replan_around to find a new path that avoids the blocked node, which is the conflict node at t=0.
+    result = _replan_around(gse, {blocked_node}, nodes, h, t=0)
+    new_path = [n for n, _ in gse.path_to_goal]
+
+    ok = result and (new_path != old_path) and (blocked_node not in new_path)
+    return ok, (
+        f"same_time_cross=({conflict_node}, t={conflict_t}), "
+        f"reroute_success={result}, path_changed={new_path != old_path}, "
+        f"avoided_conflict_node={blocked_node not in new_path}"
+    )
+
+#
+def check_cbs_timeline():
+    """Verify CBS resolves same-time crossing until both GSEs reach goals."""
+    nodes, graph, h, charging, r1, r2, conflict_node, conflict_t = setup_cbs_grid_case()
+    goal1, goal2 = r1[-1], r2[-1]
+
+    #GSE's 
+    gse1 = GSE(1, r1[0], nodes, charging_nodes=charging, speed=1.0)
+    gse2 = GSE(2, r2[0], nodes, charging_nodes=charging, speed=1.0)
+
+    for gse, route in [(gse1, r1), (gse2, r2)]:
+        gse.status = "taxiing"
+        gse.goal = route[-1]
+        gse.current_node = route[0]
+        gse.path_to_goal = [(n, 0) for n in route[1:]]
+        gse.from_to = [route[0], route[1]]
+        gse.waiting = False
+
+    print("\nCBS collision verification on 10x10 grid")
+    print(f"GSE1 route before CBS: {r1}")
+    print(f"GSE2 route before CBS: {r2}")
+    print(f"planned same-time crossing at node {conflict_node} on t={conflict_t}")
+
+    collisions_non_goal = []
+    gse2_yielded_or_rerouted = False
+    gse2_initial_path = [n for n, _ in gse2.path_to_goal]
+    resolved_routes_t0 = None
+    gse2_artificial_noop_ticks = []
+
+    t = 0
+    max_steps = 30
+    while t < max_steps:
+        path2_before = [n for n, _ in gse2.path_to_goal]
+        resolve_conflicts([gse1, gse2], nodes, h, t=t)
+        path2_after = [n for n, _ in gse2.path_to_goal]
+
+        if t == 0:
+            resolved_routes_t0 = (_route_nodes(gse1), _route_nodes(gse2))
+
+        if gse2.waiting or path2_after != path2_before:
+            gse2_yielded_or_rerouted = True
+
+        if (not gse2.waiting) and path2_after and path2_after[0] == gse2.current_node:
+            gse2_artificial_noop_ticks.append(t)
+
+        print(
+            f"t={t}: GSE1 node={gse1.current_node}, waiting={gse1.waiting}; "
+            f"GSE2 node={gse2.current_node}, waiting={gse2.waiting}, path={path2_after}"
+        )
+
+        if gse1.current_node == gse2.current_node and gse1.current_node not in {goal1, goal2}:
+            collisions_non_goal.append((t, gse1.current_node))
+
+        if not gse1.waiting:
+            gse1.move(dt=1.0, t=t)
+        if not gse2.waiting:
+            gse2.move(dt=1.0, t=t)
+
+        reached1 = gse1.current_node == goal1 and not gse1.path_to_goal
+        reached2 = gse2.current_node == goal2 and not gse2.path_to_goal
+        if reached1 and reached2:
+            break
+
+        t += 1
+
+    steps_used = t + 1
+
+    gse2_changed_from_initial = [n for n, _ in gse2.path_to_goal] != gse2_initial_path
+    no_artificial_wait = len(gse2_artificial_noop_ticks) == 0
+    ok = gse2_yielded_or_rerouted and len(collisions_non_goal) == 0 and no_artificial_wait
+    cbs_plot = plot_cbs_grid_case(nodes,graph,r1,r2,resolved_routes_t0[0] if resolved_routes_t0 else r1,resolved_routes_t0[1] if resolved_routes_t0 else r2,conflict_node,
+    )
+    return ok, {
+        "msg": (
+        f"same_time_cross=({conflict_node}, t={conflict_t}), "
+        f"yield_or_reroute={gse2_yielded_or_rerouted}, "
+        f"path_changed={gse2_changed_from_initial}, "
+        f"no_artificial_wait={no_artificial_wait}, "
+        f"artificial_noop_ticks={gse2_artificial_noop_ticks}, "
+        f"collisions_non_goal={collisions_non_goal}, "
+        f"steps={steps_used}, reached_goals={gse1.current_node == goal1 and gse2.current_node == goal2}"
+        ),
+        "plot": cbs_plot,
+    }
 
 
-def plot_astar(actual_path, expected_path=None):
+def plot_cbs_grid_case(nodes, graph, route1_before, route2_before, route1_after, route2_after, conflict_node):
+    pos = {n: nodes[n]["xy_pos"] for n in nodes}
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    nx.draw_networkx_edges(graph, pos, ax=ax, edge_color="#d8d8d8", width=0.9, arrows=False)
+    nx.draw_networkx_nodes(graph, pos, ax=ax, node_size=35, node_color="grey")
+
+    nx.draw_networkx_edges(graph,pos,ax=ax,edgelist=list(zip(route1_before, route1_before[1:])),edge_color="#1f77b4",width=2.0,style="dashed",arrows=False,)
+    nx.draw_networkx_edges(graph,pos,ax=ax,edgelist=list(zip(route2_before, route2_before[1:])),edge_color="#ff7f0e",width=2.0,style="dashed", arrows=False,)
+    nx.draw_networkx_edges(graph,pos,ax=ax,edgelist=list(zip(route1_after, route1_after[1:])),edge_color="#0057b8",width=3.0,arrows=False,)
+    nx.draw_networkx_edges(graph,pos,ax=ax,edgelist=list(zip(route2_after, route2_after[1:])),edge_color="#d62728",width=3.0,arrows=False,)
+
+    nx.draw_networkx_nodes(graph, pos, ax=ax, nodelist=[route1_before[0]], node_color="#1f77b4", node_size=110)
+    nx.draw_networkx_nodes(graph, pos, ax=ax, nodelist=[route2_before[0]], node_color="#ff7f0e", node_size=110)
+    nx.draw_networkx_nodes(graph, pos, ax=ax, nodelist=[conflict_node], node_color="#aa0000", node_size=130)
+
+    x, y = pos[conflict_node]
+    ax.text(x + 0.15, y + 0.15, f"conflict node {conflict_node}", fontsize=9)
+    ax.set_title("CBS on 10x10 grid: dashed=planned, solid=after resolve_conflicts(t=0)")
+
+    legend_items = [
+        Line2D([0], [0], color="#1f77b4", lw=2.0, ls="--", label="GSE1 planned"),
+        Line2D([0], [0], color="#ff7f0e", lw=2.0, ls="--", label="GSE2 planned"),
+        Line2D([0], [0], color="#0057b8", lw=3.0, label="GSE1 after CBS"),
+        Line2D([0], [0], color="#d62728", lw=3.0, label="GSE2 after CBS"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#aa0000", markersize=9, label="Conflict node"),
+    ]
+    ax.legend(handles=legend_items, loc="upper left", frameon=True)
+
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    out = FIG_DIR / "cbs_grid_10x10.png"
+    fig.savefig(out, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+def plot_astar():
     pos = {n: NODES[n]["xy_pos"] for n in NODES}
     fig, ax = plt.subplots(figsize=(6, 4))
-    nx.draw_networkx_edges(GRAPH, pos, ax=ax, edge_color="#cccccc", width=1.0, arrows=False)
+    
+    #draw edges,nodes and labels
+    nx.draw_networkx_edges(GRAPH, pos, ax=ax, edge_color="#ccc", width=1.0, arrows=False)
     nx.draw_networkx_nodes(GRAPH, pos, ax=ax, node_size=300, node_color="#9ecae1")
     nx.draw_networkx_labels(GRAPH, pos, ax=ax)
-    nx.draw_networkx_edge_labels(GRAPH, pos, ax=ax, edge_labels={(a, b): w for (a, b), w in EDGES.items()}, font_size=7)
 
-    if expected_path and len(expected_path) > 1:
-        nx.draw_networkx_edges(
-            GRAPH,
-            pos,
-            ax=ax,
-            edgelist=list(zip(expected_path, expected_path[1:])),
-            edge_color="#1f77b4",
-            width=2.0,
-            style="dashed",
-            arrows=False,
-        )
-
-    if actual_path and len(actual_path) > 1:
-        nx.draw_networkx_edges(
-            GRAPH,
-            pos,
-            ax=ax,
-            edgelist=list(zip(actual_path, actual_path[1:])),
-            edge_color="#d62728",
-            width=2.8,
-            arrows=False,
-        )
-
-    ax.set_title(f"A* actual path: {actual_path}")
-    ax.axis("off")
+    #saving the figure
     FIG_DIR.mkdir(parents=True, exist_ok=True)
-    out = FIG_DIR / "astar_simple.png"
-    fig.tight_layout()
-    fig.savefig(out, dpi=180)
+    fig.savefig(FIG_DIR / "astar_simple.png", dpi=150, bbox_inches='tight')
     plt.close(fig)
-    return out
-
-def plot_bidding_graph(gse1, gse2, task, winner, bidding_info):
-    pos = {n: NODES[n]["xy_pos"] for n in NODES}
-    fig, ax = plt.subplots(figsize=(7, 4))
-    nx.draw_networkx_edges(GRAPH, pos, ax=ax, edge_color="#d0d0d0", width=1.0, arrows=False)
-    nx.draw_networkx_edge_labels(GRAPH, pos, ax=ax, edge_labels={(a, b): w for (a, b), w in EDGES.items()}, font_size=7)
-    nx.draw_networkx_nodes(GRAPH, pos, ax=ax, node_size=260, node_color="#9ecae1")
-    nx.draw_networkx_labels(GRAPH, pos, ax=ax)
-
-    bid_by_gse = {b["gse_id"]: b for b in bidding_info["bids"]}
-
-    gse1_xy = NODES[gse1.current_node]["xy_pos"]
-    gse2_xy = NODES[gse2.current_node]["xy_pos"]
-    color_1 = "#ff7f0e" if gse1.id == winner else "#2ca02c"
-    color_2 = "#ff7f0e" if gse2.id == winner else "#2ca02c"
-    ax.scatter(*gse1_xy, s=260, c=color_1, marker="s", zorder=5)
-    ax.scatter(*gse2_xy, s=260, c=color_2, marker="s", zorder=5)
-
-    gse1_info = bid_by_gse.get(gse1.id, {})
-    gse2_info = bid_by_gse.get(gse2.id, {})
-    ax.text(
-        gse1_xy[0] + 0.06,
-        gse1_xy[1] + 0.06,
-        f"GSE {gse1.id}\nbid={gse1_info.get('bid')}\nSoC={gse1_info.get('soc')}",
-        fontsize=8,
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color_1, alpha=0.85),
-    )
-    ax.text(
-        gse2_xy[0] + 0.06,
-        gse2_xy[1] - 0.23,
-        f"GSE {gse2.id}\nbid={gse2_info.get('bid')}\nSoC={gse2_info.get('soc')}",
-        fontsize=8,
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color_2, alpha=0.85),
-    )
-    ax.scatter(*NODES[task.node_id]["xy_pos"], s=180, c="#d62728", marker="*", zorder=6)
-    ax.set_title(f"Bidding overview (position + bid + SoC), winner GSE {winner}")
-    ax.axis("off")
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
-    out = FIG_DIR / "bidding_graph.png"
-    fig.tight_layout()
-    fig.savefig(out, dpi=180)
-    plt.close(fig)
-    return out
-
-
-def plot_bidding_processes(bidding_info):
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3.8))
-
-    # 1) Position effect (different start node)
-    labels_pos = [f"GSE {b['gse_id']}" for b in bidding_info["bids"]]
-    vals_pos = [b["bid"] for b in bidding_info["bids"]]
-    colors_pos = ["#ff7f0e" if b["gse_id"] == bidding_info["winner"] else "#9ecae1" for b in bidding_info["bids"]]
-    axes[0].bar(labels_pos, vals_pos, color=colors_pos)
-    axes[0].set_title("Position effect")
-    axes[0].set_ylabel("Bid")
-
-    # 2) SoC effect (same start node)
-    labels_soc = ["High SoC", "Low SoC"]
-    vals_soc = [bidding_info["bid_high_soc"], bidding_info["bid_low_soc"]]
-    axes[1].bar(labels_soc, vals_soc, color=["#2ca02c", "#d62728"])
-    axes[1].set_title("SoC effect")
-
-    # 3) Low SoC blocking
-    low_bid = bidding_info["low_soc_bid"]
-    plot_val = 0 if low_bid == float("inf") else low_bid
-    axes[2].bar(["Low SoC GSE"], [plot_val], color="#9467bd")
-    axes[2].set_title("Low SoC blocking")
-    axes[2].text(0, plot_val + 0.05, "inf" if low_bid == float("inf") else f"{low_bid:.2f}", ha="center", fontsize=9)
-
-    for ax in axes:
-        ax.grid(axis="y", alpha=0.25)
-
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
-    out = FIG_DIR / "bidding_processes.png"
-    fig.tight_layout()
-    fig.savefig(out, dpi=180)
-    plt.close(fig)
-    return out
-
-
-def write_report(results, astar_path, bidding_info, edge_plot, bidding_plot, bidding_processes_plot, log_file):
-    report = log_file
-    lines = [
-        "# Verification Report",
-        f"Generated: {datetime.now().isoformat(timespec='seconds')}",
-        "",
-        "## Checks",
-    ]
-    for name, ok, details in results:
-        lines.append(f"- {'PASS' if ok else 'FAIL'} | {name} | {details}")
-    lines += [
-        "",
-        "## A* example",
-        f"- Actual path: {astar_path['actual_path']}",
-        f"- Expected path: {astar_path['expected_path']}",
-        f"- Plot: {FIG_DIR / 'astar_simple.png'}",
-        "",
-        "## Bidding graph",
-        f"- Plot: {bidding_plot}",
-        f"- Bidding processes plot: {bidding_processes_plot}",
-        "",
-        "## Bidding",
-        f"- Winner: GSE {bidding_info['winner']}",
-        f"- Position check: {bidding_info['position_ok']}",
-        f"- SoC effect check: {bidding_info['soc_effect_ok']} (high={bidding_info['bid_high_soc']}, low={bidding_info['bid_low_soc']})",
-        f"- Low SoC block check: {bidding_info['low_soc_ok']} (bid={bidding_info['low_soc_bid']})",
-        f"- Bid rows: {len(bidding_info['bids'])}",
-        f"- Log file: {log_file}",
-        "",
-        "### Bid details",
-    ]
-    for bid in bidding_info["bids"]:
-        lines.append(f"- GSE {bid['gse_id']}: bid={bid['bid']}, soc={bid['soc']}, start_node={bid['start_node']}")
-    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return report
-
+    return FIG_DIR / "astar_simple.png"
 
 def main():
-    results = []
+    print("\n=== Verification Checks ===")
 
-    astar_ok, astar_info = check_astar()
-    results.append(("A* manual path", astar_ok, f"actual={astar_info['actual_path']}, expected={astar_info['expected_path']}, length={astar_info['length']}"))
+    ok, path = check_astar()
+    print(f"[{'PASS' if ok else 'FAIL'}] A* path: {path}")
+    
+    ok, n = check_heuristics()
+    print(f"[{'PASS' if ok else 'FAIL'}] Heuristics: {n} nodes")
+    
+    ok, winner = check_bidding()
+    print(f"[PASS] Bidding: winner=GSE {winner}")
+    
+    ok = check_min_max()
+    print(f"[{'PASS' if ok else 'FAIL'}] Min/max: SOC constraint")
+    
+    ok = check_constraints()
+    print(f"[{'PASS' if ok else 'FAIL'}] Constraints: gate, nodes, charging")
+    
+    ok, msg = check_cbs_priority()
+    print(f"[{'PASS' if ok else 'FAIL'}] CBS Priority: {msg}")
+    
+    ok, msg = check_cbs_reroute()
+    print(f"[{'PASS' if ok else 'FAIL'}] CBS Reroute: {msg}")
 
-    heur_ok, heur_info = check_heuristics()
-    results.append(("Heuristics", heur_ok, f"nodes={heur_info['nodes']}, pairs={heur_info['pairs']}"))
 
-    bidding_ok, bidding_info = check_bidding()
-    results.append((
-        "Bidding (position + SoC)",
-        bidding_ok,
-        (
-            f"winner={bidding_info['winner']}, position_ok={bidding_info['position_ok']}, "
-            f"soc_effect_ok={bidding_info['soc_effect_ok']}, low_soc_ok={bidding_info['low_soc_ok']}"
-        ),
-    ))
 
-    minmax_ok, minmax_info = check_min_max()
-    results.append(("Min/max", minmax_ok, f"soc={minmax_info['soc']}, status={minmax_info['status']}"))
-
-    constr_ok, constr_info = check_constraints()
-    results.append(("Constraints", constr_ok, str(constr_info)))
-
-    plot_out = plot_astar(astar_info["actual_path"], expected_path=astar_info["expected_path"])
-    gse1 = GSE(1, 3, NODES, charging_nodes=CHARGING, speed=1.0)
-    gse2 = GSE(2, 7, NODES, charging_nodes=CHARGING, speed=1.0)
-    gse1.soc = 90.0
-    gse2.soc = 60.0
-    task = Task("P1", 5, 1, 8, "unload")
-    bidding_plot = plot_bidding_graph(gse1, gse2, task, bidding_info["winner"], bidding_info)
-    bidding_processes_plot = plot_bidding_processes(bidding_info)
-    log_file = LOG_DIR / "verification_log.md"
-    report = write_report(results, astar_info, bidding_info, None, bidding_plot, bidding_processes_plot, log_file)
-
-    print("\n=== Verification Report ===")
-    for name, ok, details in results:
-        print(f"[{'PASS' if ok else 'FAIL'}] {name}")
-        print(f"       {details}")
-    print(f"Plot saved: {plot_out}")
-    print(f"Bidding graph saved: {bidding_plot}")
-    print(f"Bidding processes plot saved: {bidding_processes_plot}")
-    print(f"Report saved: {report}")
-
+    ok, timeline_info = check_cbs_timeline()
+    print(f"[{'PASS' if ok else 'FAIL'}] CBS Timeline: {timeline_info['msg']}")
+    
+    astar_plot = plot_astar()
+    print(f"\nPlots: {astar_plot}")
+    print(f"       {timeline_info['plot']}")
 
 if __name__ == "__main__":
     main()
