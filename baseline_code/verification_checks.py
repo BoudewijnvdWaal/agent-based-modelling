@@ -86,8 +86,8 @@ def setup_cbs_grid_case():
     """Deterministic long-route collision case on 10x10 grid."""
     nodes, graph, h = load_grid_10x10()
     charging = []
-    route1 = [23, 43, 44, 45, 46, 47, 48, 49, 59, 69]
-    route2 = [24, 34, 35, 45, 55, 65, 75, 85,86, 96]
+    route1 = [41, 42, 43, 44, 45, 55, 65, 75]
+    route2 = [49, 48, 47, 46, 45, 35, 25, 15]
     conflict_node = 45
     conflict_t = 4
 
@@ -237,8 +237,10 @@ def check_cbs_timeline():
     collisions_non_goal = []
     gse2_yielded_or_rerouted = False
     gse2_initial_path = [n for n, _ in gse2.path_to_goal]
-    resolved_routes_t0 = None
     gse2_artificial_noop_ticks = []
+    
+    executed_route1 = [gse1.current_node]
+    executed_route2 = [gse2.current_node]
 
     t = 0
     max_steps = 30
@@ -246,9 +248,6 @@ def check_cbs_timeline():
         path2_before = [n for n, _ in gse2.path_to_goal]
         resolve_conflicts([gse1, gse2], nodes, h, t=t)
         path2_after = [n for n, _ in gse2.path_to_goal]
-
-        if t == 0:
-            resolved_routes_t0 = (_route_nodes(gse1), _route_nodes(gse2))
 
         if gse2.waiting or path2_after != path2_before:
             gse2_yielded_or_rerouted = True
@@ -268,6 +267,11 @@ def check_cbs_timeline():
             gse1.move(dt=1.0, t=t)
         if not gse2.waiting:
             gse2.move(dt=1.0, t=t)
+            
+        if executed_route1[-1] != gse1.current_node:
+            executed_route1.append(gse1.current_node)
+        if executed_route2[-1] != gse2.current_node:
+            executed_route2.append(gse2.current_node)
 
         reached1 = gse1.current_node == goal1 and not gse1.path_to_goal
         reached2 = gse2.current_node == goal2 and not gse2.path_to_goal
@@ -281,7 +285,7 @@ def check_cbs_timeline():
     gse2_changed_from_initial = [n for n, _ in gse2.path_to_goal] != gse2_initial_path
     no_artificial_wait = len(gse2_artificial_noop_ticks) == 0
     ok = gse2_yielded_or_rerouted and len(collisions_non_goal) == 0 and no_artificial_wait
-    cbs_plot = plot_cbs_grid_case(nodes,graph,r1,r2,resolved_routes_t0[0] if resolved_routes_t0 else r1,resolved_routes_t0[1] if resolved_routes_t0 else r2,conflict_node,
+    cbs_plot = plot_cbs_grid_case(nodes, graph, r1, r2, executed_route1, executed_route2, conflict_node,
     )
     return ok, {
         "msg": (
@@ -315,13 +319,18 @@ def plot_cbs_grid_case(nodes, graph, route1_before, route2_before, route1_after,
 
     x, y = pos[conflict_node]
     ax.text(x + 0.15, y + 0.15, f"conflict node {conflict_node}", fontsize=9)
-    ax.set_title("CBS on 10x10 grid: dashed=planned, solid=after resolve_conflicts(t=0)")
+
+    x1, y1 = pos[route1_before[0]]
+    ax.text(x1 + 0.15, y1 + 0.15, "start (t=0)", fontsize=9, color="#1f77b4", fontweight="bold")
+    
+    x2, y2 = pos[route2_before[0]]
+    ax.text(x2 + 0.15, y2 + 0.15, "start (t=0)", fontsize=9, color="#ff7f0e", fontweight="bold")
 
     legend_items = [
         Line2D([0], [0], color="#1f77b4", lw=2.0, ls="--", label="GSE1 planned"),
         Line2D([0], [0], color="#ff7f0e", lw=2.0, ls="--", label="GSE2 planned"),
-        Line2D([0], [0], color="#0057b8", lw=3.0, label="GSE1 after CBS"),
-        Line2D([0], [0], color="#d62728", lw=3.0, label="GSE2 after CBS"),
+        Line2D([0], [0], color="#0057b8", lw=3.0, label="GSE1 actual"),
+        Line2D([0], [0], color="#d62728", lw=3.0, label="GSE2 actual"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor="#aa0000", markersize=9, label="Conflict node"),
     ]
     ax.legend(handles=legend_items, loc="upper left", frameon=True)
