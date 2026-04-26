@@ -101,7 +101,7 @@ def map_initialization(nodes_dict, edges_dict, spawn_schedule=None):  # function
     #print(edges_dict)
 
     map_properties = dict()  # create dict to return all properties
-    map_properties['spawn_schedule'] = spawn_schedule or []  # [NIEUW] sla spawn schema op
+    map_properties['spawn_schedule'] = spawn_schedule or []  # store spawn schedule
     map_properties['node_metadata_by_xy'] = {
         normalize_xy(node_props["xy_pos"]): {
             "id": node_id,
@@ -230,7 +230,7 @@ def map_get_background(map_properties, nodes_dict, edges_dict):
     x_range = map_properties['x_range']  # get horizontal range
     max_y = map_properties['max_y'] # get y0 (measured from above)
     y_range = map_properties['y_range']  # get vertical range
-    spawn_schedule = map_properties.get('spawn_schedule', [])  # [NIEUW]
+    spawn_schedule = map_properties.get('spawn_schedule', [])  # optional schedule for spawn markers
 
     map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_range, 0, 0,
                    spawn_schedule=spawn_schedule)
@@ -275,9 +275,9 @@ def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_r
         plot_text(scr, thisString, black, 14, reso, wp_coordinate[0], wp_coordinate[1], min_x, max_y, x_range,
                   y_range, 10, 10)
 
-    # [NIEUW] Teken spawn-locaties van vliegtuigen als oranje cirkel met label
+    # Draw aircraft spawn locations as an orange circle with a label
     if spawn_schedule:
-        seen_spawn_nodes = {}  # node_id -> lijst van flight_ids die daar spawnen
+        seen_spawn_nodes = {}  # node_id -> list of flight_ids that spawn there
         for entry in spawn_schedule:
             spawn_time, flight_id, a_d, start_node, goal_node = entry
             if start_node not in seen_spawn_nodes:
@@ -288,10 +288,10 @@ def map_get_layout(scr, nodes_dict, edges_dict, min_x, max_y, reso, x_range, y_r
             if node_id in nodes_dict:
                 sx = nodes_dict[node_id]['x_pos']
                 sy = nodes_dict[node_id]['y_pos']
-                # Oranje ring rondom de node (iets groter dan de standaard cirkel)
+                # Orange ring around the node (slightly larger than the default circle)
                 plot_circle(scr, orange, reso, 8, [sx, sy], min_x, max_y, x_range, y_range,
                             scr_x_shift, scr_y_shift)
-                # Label "S:1,2" boven de node
+                # Label "S:1,2" above the node
                 label = "S:" + ",".join(str(fid) for fid in flight_ids)
                 plot_text(scr, label, orange, 14, reso, sx, sy, min_x, max_y, x_range, y_range,
                           scr_x_shift, scr_y_shift - 18)
@@ -302,7 +302,7 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
     """
     Function updates Pygame map based on the map_properties, current state of the vehicles,
     parked gate planes, and the time.
-    Collissions are detected if two aircraft are at the same xy_position. HINT: Is a collision the only conflict?    
+    Collisions are detected if two aircraft are at the same xy_position. HINT: Is a collision the only conflict?
     If escape key is pressed, pygame closes.
     If "p" key is pressed, pygame pauses. If enter is pressed pygame continues.
     INPUT:
@@ -374,15 +374,15 @@ def map_running(map_properties, current_states, gate_states, t):  # function to 
     for position, states_at_position in positions_to_states.items():
         if len(states_at_position) <= 1:
             continue
-        # We tellen hoeveel GSE's op deze plek NIET aan het wachten zijn
-        # Als er meer dan 1 GSE echt aan het rijden is op dezelfde plek, is het pas een botsing.
+        # Count how many GSEs at this position are not waiting.
+        # It is only a collision when more than one GSE is actively moving here.
         active_movers = [
             s for s in states_at_position 
             if s.get("status") == "taxiing" and s.get("waiting") == False
         ]
         
         if len(active_movers) <= 1:
-            # Iemand staat stil of er is maar één rijdend voertuig: geen collision melding!
+            # Someone is stationary, or only one vehicle is moving: no collision message.
             continue
 
         node_metadata = node_metadata_by_xy.get(position)

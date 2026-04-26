@@ -62,6 +62,7 @@ class Plane:
 
     @property
     def next_service_type(self):
+        # Planes always follow unload -> load.
         if self.status == "awaiting_unload":
             return "unload"
         if self.status == "awaiting_load":
@@ -112,6 +113,7 @@ class Plane:
     def complete_current_service(self, completion_time):
         if self.current_service_type == "unload":
             self.unloading_complete_time = float(completion_time)
+            # Safety rule: loading starts only after the unloading GSE leaves the gate.
             self.status = "awaiting_load_release"
         elif self.current_service_type == "load":
             self.loading_complete_time = float(completion_time)
@@ -239,6 +241,7 @@ def load_plane_schedule(
 def build_plane_schedule_lookup(plane_schedule):
     schedule_lookup = {}
     for plane in plane_schedule:
+        # Key on 2 decimals so this matches the t-values in run_me exactly.
         schedule_lookup.setdefault(round(plane.spawn_time, 2), []).append(plane)
     return schedule_lookup
 

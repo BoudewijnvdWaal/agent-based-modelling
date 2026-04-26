@@ -9,60 +9,60 @@ class GSE(object):
     """
 
     # -------------------------------------------------------------------------
-    # Initialisatie
+    # Initialization
     # -------------------------------------------------------------------------
 
     def __init__(self, gse_id, start_node, nodes_dict, charging_nodes=None, speed=1.0):
         """
-        Initialisatie van een GSE object.
+        Initialize a GSE object.
         INPUT:
-            - gse_id        : [int] uniek id voor deze GSE
-            - start_node    : [int] node_id van de startpositie
-            - nodes_dict    : [dict] kopie van het nodes_dict
-            - charging_nodes: [list[int]] node_ids van alle oplaadstations.
-                              De GSE rijdt altijd naar de dichtstbijzijnde.
+            - gse_id        : [int] unique id for this GSE
+            - start_node    : [int] node_id of the start position
+            - nodes_dict    : [dict] copy of nodes_dict
+            - charging_nodes: [list[int]] node_ids of all charging stations.
+                              The GSE always drives to the nearest one.
         """
 
-        # --- Vaste parameters ---
+        # --- Fixed parameters ---
         self.id             = gse_id
         self.nodes_dict     = nodes_dict
         self.charging_nodes = list(charging_nodes) if charging_nodes else []
-        self.base_speed  = 1.0          # referentiesnelheid voor batterijverbruik
-        self.base_consumption_rate = 0.5  # verbruik per tijdseenheid bij base_speed
+        self.base_speed  = 1.0          # reference speed used for battery scaling
+        self.base_consumption_rate = 0.5  # consumption per time unit at base_speed
         self.speed       = self.base_speed
 
-        # --- Startpositie ---
+        # --- Start position ---
         self.start         = start_node
         self.current_node  = start_node
         self.position      = nodes_dict[start_node]["xy_pos"]
 
-        # --- Status & taak ---
-        # Mogelijke statussen:
-        #   "available"      – klaar voor een nieuwe taak
-        #   "taxiing"        – onderweg naar een gate of depot
-        #   "working"        – bezig bij de gate (vliegtuig wordt bediend)
-        #   "charging"       – aan het opladen in het depot
-        #   "needs_charging" – accu kritiek laag, moet naar depot
-        #   "at_cargo_pickup" / "at_cargo_dropoff" – tussenstappen in cargomissie
+        # --- Status & task ---
+        # Possible statuses:
+        #   "available"      - ready for a new task
+        #   "taxiing"        - driving to a gate or depot
+        #   "working"        - servicing a plane at the gate
+        #   "charging"       - charging at the depot
+        #   "needs_charging" - battery low, must go to depot
+        #   "at_cargo_pickup" / "at_cargo_dropoff" - intermediate cargo states
         self.status               = "available"
-        self.goal                 = None    # huidig doelnode
+        self.goal                 = None    # current target node
         self.assigned_plane_id    = None
         self.assigned_service_type = None
         self.work_end_time        = None
         self.task_stage           = None
 
-        # --- Batterij ---
+        # --- Battery ---
         self.soc              = 100.0   # State of Charge in %
         self.consumption_rate = self.base_consumption_rate
-        self.charge_duration  = 15.0   # vaste oplaadtijd in minuten (altijd volledig opladen)
-        self.charge_time_elapsed = 0.0  # verstreken oplaadtijd in huidige sessie
-        self.low_soc_threshold   = 20.0  # onder deze waarde niet meer bieden + naar depot
-        self.critical_soc_threshold = 10.0  # noodgeval: direct naar depot tijdens rijden
-        self.total_energy_consumed = 0.0  # cumulatief accuverbruik over gehele simulatie (%)
-        self.completed_tasks       = 0    # aantal voltooide servicetaken
+        self.charge_duration  = 15.0   # fixed charging duration in minutes (always full charge)
+        self.charge_time_elapsed = 0.0  # elapsed charging time in current session
+        self.low_soc_threshold   = 20.0  # below this, stop bidding and go to depot
+        self.critical_soc_threshold = 10.0  # emergency: go to depot immediately while driving
+        self.total_energy_consumed = 0.0  # cumulative battery consumption over the full simulation (%)
+        self.completed_tasks       = 0    # number of completed service tasks
 
-        # --- Pad & beweging ---
-        self.path_to_goal = []   # lijst van (node_id, tijdstip) tuples
+        # --- Path & movement ---
+        self.path_to_goal = []   # list of (node_id, timestep) tuples
         self.from_to      = [0, 0]
         self.heading      = 0
         self.waiting      = False
@@ -71,8 +71,8 @@ class GSE(object):
 
     def set_speed(self, speed):
         """
-        Stel de rijsnelheid in en schaal het batterijverbruik mee zodat
-        verbruik per afgelegde afstand gelijk blijft.
+        Set driving speed and scale battery use so
+        consumption per distance stays constant.
         """
         if speed <= 0:
             raise ValueError(f"GSE speed must be positive, got {speed}.")
@@ -82,24 +82,24 @@ class GSE(object):
         self.consumption_rate = self.base_consumption_rate * speed_ratio
 
     # -------------------------------------------------------------------------
-    # Batterijbeheer
+    # Battery management
     # -------------------------------------------------------------------------
 
     def update_soc(self, dt):
         """
-        Werkt de State of Charge bij op basis van de huidige status.
-        Roep deze aan bij elke tijdstap in de simulatieloop.
+        Update State of Charge based on current status.
+        Call once per simulation timestep.
         INPUT:
-            - dt: grootte van de tijdstap
+            - dt: timestep size
         """
         if self.status == "taxiing":
-            # Accu verbruik alleen tijdens rijden
+            # Battery drains only while moving
             drain = min(self.soc, self.consumption_rate * dt)
             self.soc -= drain
             self.total_energy_consumed += drain
 
         elif self.status == "charging":
-            # Vaste oplaadduur van charge_duration minuten; daarna volledig opgeladen
+            # Fixed charging time of charge_duration minutes, then fully charged
             self.charge_time_elapsed += dt
             if self.charge_time_elapsed >= self.charge_duration:
                 self.soc = 100.0
@@ -108,12 +108,12 @@ class GSE(object):
                 self.goal = None
                 print(f"[GSE {self.id}] Volledig opgeladen na {self.charge_duration:.0f} minuten, status -> available")
 
-        # Lage accu (10–20%): stuur naar depot zodra GSE beschikbaar of klaar met werken
+        # Low battery (10-20%): send to depot when available or done working
         if self.soc <= self.low_soc_threshold and self.status == "available":
             self.status = "needs_charging"
             print(f"[GSE {self.id}] Lage SoC ({self.soc:.1f}%), status -> needs_charging")
 
-        # Noodgeval: accu kritiek laag (<10%) tijdens rijden naar een taak
+        # Emergency: critically low battery (<10%) while driving to a task
         elif (self.soc <= self.critical_soc_threshold
               and self.status == "taxiing"
               and self.task_stage != "to_depot"):
@@ -122,8 +122,8 @@ class GSE(object):
 
     def _nearest_charging_node(self, from_node, heuristics, busy_nodes=None):
         """
-        Geeft (node_id, afstand) terug van het minst bezette bereikbare oplaadstation.
-        busy_nodes: dict {node_id: count} hoeveel GSEs al op weg zijn naar of staan bij dat station.
+        Return (node_id, distance) of the least busy reachable charging station.
+        busy_nodes: dict {node_id: count} for GSEs already heading to or waiting at that station.
         """
         best_id, best_score = None, float('inf')
         for cn in self.charging_nodes:
@@ -140,8 +140,8 @@ class GSE(object):
 
     def go_charge(self, nodes_dict, heuristics, t, busy_charging_nodes=None):
         """
-        Plant een pad naar het minst bezette oplaadstation.
-        Roep aan wanneer status == 'needs_charging'.
+        Plan a route to the least busy charging station.
+        Call when status == 'needs_charging'.
         """
         target, _ = self._nearest_charging_node(self.current_node, heuristics, busy_charging_nodes)
         if target is None:
@@ -158,7 +158,7 @@ class GSE(object):
         )
 
     # -------------------------------------------------------------------------
-    # Veiling (Auction)
+    # Auction
     # -------------------------------------------------------------------------
 
     def calculate_bid(
@@ -171,21 +171,21 @@ class GSE(object):
         max_shortest_path_distance=1.0,
     ):
         """
-        Berekent een bod voor een taak bij gate_node_id.
-        Lagere waarde = beter bod.
-        Biedt float('inf') als GSE niet beschikbaar, accu te laag, of als de GSE
-        niet genoeg accu heeft om de taak te voltooien én terug naar het depot te rijden.
+        Calculate a bid for a task at gate_node_id.
+        Lower value = better bid.
+        Returns float('inf') if GSE is unavailable, SoC too low, or if
+        the GSE cannot complete the task route with current battery.
         INPUT:
-            - gate_node_id  : [int] eerste doelnode (cargo_from bij load, plane.node_id bij unload)
-            - heuristics    : [dict] voorberekende afstanden tussen nodes
-            - second_node_id: [int] tweede doelnode (plane.node_id bij load, cargo_to bij unload)
+            - gate_node_id  : [int] first target node (cargo_from for load, plane.node_id for unload)
+            - heuristics    : [dict] precomputed distances between nodes
+            - second_node_id: [int] second target node (plane.node_id for load, cargo_to for unload)
         RETURNS:
-            - bid : [float] bod (lagere waarde = beter)
+            - bid : [float] bid value (lower is better)
         """
         if self.status != "available" or self.soc <= self.low_soc_threshold:
             return float('inf')
 
-        # Controleer of de route bestaat
+        # Check whether the route exists
         if gate_node_id not in heuristics.get(self.current_node, {}):
             return float('inf')
 
@@ -198,17 +198,17 @@ class GSE(object):
         else:
             last_node = gate_node_id
 
-        # Accu-verbruik per afstandseenheid is constant ongeacht snelheid
-        # Alleen de taakafstand telt: finish_working stuurt de GSE daarna naar het depot
-        # als de accu laag is. De return-trip hoeft hier niet meegenomen te worden,
-        # want dat blokkeerde GSEs met 20-37% SoC onnodig van elke taak.
+        # Energy per distance unit is constant regardless of speed.
+        # Only the task route is priced here: finish_working sends the GSE to depot
+        # afterward when SoC is low. Including return distance here would block
+        # mid-SoC GSEs from taking otherwise feasible tasks.
         energy_per_unit = self.base_consumption_rate  # = consumption_rate / speed
         energy_needed = distance * energy_per_unit
         if energy_needed > self.soc:
             return float('inf')
 
-        # Normaliseer beide componenten en combineer met instelbare gewichten.
-        # afstand in [0, 1+] via vaste schaal d_max; SoC-penalty in [0, 1].
+        # Normalize both components and combine them with configurable weights.
+        # distance in [0, 1+] via fixed d_max scale; SoC penalty in [0, 1].
         distance_norm = distance / max(max_shortest_path_distance, 1e-9)
         soc_penalty_norm = (100.0 - self.soc) / 100.0
 
@@ -216,13 +216,13 @@ class GSE(object):
         return bid
 
     # -------------------------------------------------------------------------
-    # Padplanning
+    # Path planning
     # -------------------------------------------------------------------------
 
     def _plan_path(self, nodes_dict, heuristics, t, label="goal", forbidden_nodes=None):
         """
-        Interne helper: voert A* uit van self.start naar self.goal.
-        forbidden_nodes: optionele set van node_ids die vermeden moeten worden (herrouting).
+        Internal helper: run A* from self.start to self.goal.
+        forbidden_nodes: optional set of node_ids to avoid (rerouting).
         """
         success, path = simple_single_agent_astar(
             nodes_dict, self.start, self.goal, heuristics, t, forbidden_nodes=forbidden_nodes
@@ -246,18 +246,18 @@ class GSE(object):
                 next_node_id  = self.path_to_goal[0][0]
                 self.from_to  = [path[0][0], next_node_id]
             node_sequence = " -> ".join(str(int(node_id)) for node_id, _ in path)
-            print(f"[GSE {self.id}] Pad naar {label}: {node_sequence}")
+            print(f"[GSE {self.id}] Path to {label}: {node_sequence}")
         else:
-            raise Exception(f"[GSE {self.id}] Geen pad gevonden naar {label} (node {self.goal})")
+            raise Exception(f"[GSE {self.id}] No path found to {label} (node {self.goal})")
 
         if path[0][1] != t:
-            raise Exception(f"[GSE {self.id}] Tijdstip van pad klopt niet: verwacht {t}, kreeg {path[0][1]}")
+            raise Exception(f"[GSE {self.id}] Path timestamp mismatch: expected {t}, got {path[0][1]}")
 
     def plan_to_node(self, node_id, nodes_dict, heuristics, t, stage=None, label="goal", forbidden_nodes=None):
         self.goal = node_id
-        # Als de GSE midden op een edge zit (positie ≠ huidige node), plan dan vanaf
-        # het volgende knooppunt waarnaartoe al gereden wordt. Dit voorkomt dat het
-        # nieuwe pad diagonaal loopt vanaf de tussenliggende positie.
+        # If the GSE is mid-edge (position != current node), replan from
+        # the next node already being approached. This avoids diagonal jumps
+        # from an in-between position.
         current_node_pos = self.nodes_dict[self.current_node]["xy_pos"]
         mid_edge = (math.dist(self.position, current_node_pos) > 1e-3
                     and self.from_to[0] != self.from_to[1])
@@ -294,37 +294,37 @@ class GSE(object):
             )
 
     # -------------------------------------------------------------------------
-    # Beweging
+    # Movement
     # -------------------------------------------------------------------------
 
     def get_heading(self, xy_start, xy_next):
         """
-        Bepaalt de rijrichting in graden op basis van twee xy-posities.
+        Compute heading in degrees based on two xy positions.
         INPUT:
-            - xy_start : (x, y) van het huidige knooppunt
-            - xy_next  : (x, y) van het volgende knooppunt
+            - xy_start : (x, y) of the current node
+            - xy_next  : (x, y) of the next node
         """
         dx = xy_next[0] - xy_start[0]
         dy = xy_next[1] - xy_start[1]
         if abs(dx) < 1e-9 and abs(dy) < 1e-9:
-            return  # geen beweging, behoud huidige heading
-        if abs(dx) < 1e-9:                      # puur verticaal
+            return  # no movement, keep current heading
+        if abs(dx) < 1e-9:                      # purely vertical
             self.heading = 0 if dy > 0 else 180
-        elif abs(dy) < 1e-9:                    # puur horizontaal
+        elif abs(dy) < 1e-9:                    # purely horizontal
             self.heading = 270 if dx > 0 else 90
         else:
-            # Diagonale beweging (kan optreden bij herplanning midden op een edge).
-            # Bereken de hoek met atan2 zodat we niet crashen.
+            # Diagonal movement can occur during mid-edge replanning.
+            # Use atan2 for a stable heading calculation.
             self.heading = round(math.degrees(math.atan2(-dx, dy)) % 360)
 
     def move(self, dt, t):
         """
-        Beweegt de GSE één tijdstap langs het geplande pad.
-        Werkt positie, heading en current_node bij.
-        Bij aankomst op het doel wordt de status bijgewerkt.
+        Move the GSE one timestep along its planned path.
+        Updates position, heading, and current_node.
+        On arrival at the goal, status is updated.
         INPUT:
-            - dt : grootte van de tijdstap
-            - t  : huidig tijdstip (voor logging)
+            - dt : timestep size
+            - t  : current time (for logging)
         """
         if not self.path_to_goal or dt <= 0:
             return
@@ -367,7 +367,7 @@ class GSE(object):
 
     def _advance_path_segment(self):
         """
-        Schuif door naar het volgende edge-segment van het huidige pad.
+        Advance to the next edge segment of the current path.
         """
         if len(self.path_to_goal) <= 1:
             self.path_to_goal = []
@@ -380,19 +380,19 @@ class GSE(object):
 
     def _on_goal_reached(self, t):
         """
-        Callback bij aankomst op het doelknooppunt.
-        Bepaalt de nieuwe status op basis van het doel.
+        Callback when arriving at the goal node.
+        Sets the next status based on task stage.
         """
         self.path_to_goal = []
         self.from_to = [self.current_node, self.current_node]
 
         if self.task_stage == "to_depot":
-            # Veiligheidscheck: zorg dat we daadwerkelijk op een oplaadstation staan
+            # Safety check: ensure we really arrived at a charging node
             node_type = self.nodes_dict[self.current_node]["type"]
             if node_type != "charging":
                 raise Exception(
-                    f"[GSE {self.id}] t={t}: aankomst bij node {self.current_node} (type='{node_type}') "
-                    f"maar dit is geen oplaadstation!"
+                    f"[GSE {self.id}] t={t}: arrived at node {self.current_node} (type='{node_type}') "
+                    f"but this is not a charging station!"
                 )
             self.status = "charging"
             self.charge_time_elapsed = 0.0
@@ -400,28 +400,28 @@ class GSE(object):
             self.assigned_plane_id = None
             self.assigned_service_type = None
             self.task_stage = None
-            print(f"[GSE {self.id}] t={t}: oplaadstation {self.current_node} bereikt, status -> charging "
-                  f"(SoC={self.soc:.1f}%, duurt {self.charge_duration:.0f} min)")
+            print(f"[GSE {self.id}] t={t}: charging station {self.current_node} reached, status -> charging "
+                f"(SoC={self.soc:.1f}%, duration {self.charge_duration:.0f} min)")
         elif self.task_stage == "load_to_cargo":
             self.status = "at_cargo_pickup"
-            print(f"[GSE {self.id}] t={t}: cargo pickup bereikt voor plane {self.assigned_plane_id}")
+            print(f"[GSE {self.id}] t={t}: cargo pickup reached for plane {self.assigned_plane_id}")
         elif self.task_stage == "unload_to_cargo":
             self.status = "at_cargo_dropoff"
-            print(f"[GSE {self.id}] t={t}: cargo dropoff bereikt voor plane {self.assigned_plane_id}")
+            print(f"[GSE {self.id}] t={t}: cargo dropoff reached for plane {self.assigned_plane_id}")
         else:
-            # Gate bereikt: begin met werken aan het vliegtuig
+            # Gate reached: start servicing the plane
             self.status = "working"
             service_label = self.assigned_service_type or "service"
             print(f"[GSE {self.id}] t={t}: gate {self.goal} bereikt, status -> working ({service_label})")
 
     # -------------------------------------------------------------------------
-    # Hulpfuncties
+    # Helper functions
     # -------------------------------------------------------------------------
 
     def finish_working(self, nodes_dict, heuristics, t):
         """
-        Roep aan wanneer het vliegtuig klaar is met beladen/tanken.
-        De GSE gaat terug naar het depot of wordt direct beschikbaar gesteld.
+        Call when the assigned plane service has finished.
+        The GSE returns to the depot or becomes available immediately.
         """
         self.assigned_plane_id = None
         self.assigned_service_type = None
@@ -431,12 +431,12 @@ class GSE(object):
         self.completed_tasks += 1
 
         if self.soc < self.low_soc_threshold:
-            # Accu te laag: direct terug naar depot
+            # Battery too low: return to depot immediately
             self.go_charge(nodes_dict, heuristics, t)
         else:
             self.status = "available"
             self.goal   = None
-            print(f"[GSE {self.id}] t={t}: taak afgerond, status -> available (SoC={self.soc:.1f}%)")
+            print(f"[GSE {self.id}] t={t}: task completed, status -> available (SoC={self.soc:.1f}%)")
 
     def __repr__(self):
         return (f"GSE(id={self.id}, status={self.status}, "
