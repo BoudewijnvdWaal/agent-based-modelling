@@ -5,6 +5,7 @@ Consider functions in this file as supporting functions.
 
 import heapq
 import networkx as nx
+import math
 
 def calc_heuristics(graph, nodes_dict):
     """
@@ -53,7 +54,7 @@ def heuristicFinder(graph, start_node, goal_node):
 
 
 
-def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time_start, forbidden_nodes=None):
+def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time_start, forbidden_nodes=None, speed=1.0):
     # def a_star(my_map, start_loc, goal_loc, h_values, agent, constraints):
     """
     Single agent A* search. Time start can only be the time that an agent is at a node.
@@ -80,7 +81,10 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
     open_list = []
     closed_list = dict()
     earliest_goal_timestep = time_start
-    h_value = heuristics[from_node_id][goal_node_id]
+    # Normalise heuristics to time by dividing distance by speed
+    if speed <= 0:
+        speed = 1e-6
+    h_value = heuristics[from_node_id][goal_node_id] / speed
     root = {'loc': from_node_id, 'g_val': 0, 'h_val': h_value, 'parent': None, 'timestep': time_start}
     push_node(open_list, root)
     closed_list[(root['loc'], root['timestep'])] = root
@@ -99,11 +103,22 @@ def simple_single_agent_astar(nodes_dict, from_node, goal_node, heuristics, time
         for neighbor in nodes_dict[curr['loc']]["neighbors"]:
             if forbidden_nodes and neighbor in forbidden_nodes:
                 continue
-            child = {'loc': neighbor,
-                    'g_val': curr['g_val'] + 1.0,
-                    'h_val': heuristics[neighbor][goal_node_id],
-                    'parent': curr,
-                    'timestep': curr['timestep'] + 1.0}
+            # Compute physical traversal time based on geometric distance and agent speed
+            try:
+                pos_curr = nodes_dict[curr['loc']]['xy_pos']
+                pos_nei = nodes_dict[neighbor]['xy_pos']
+                edge_len = math.dist(pos_curr, pos_nei)
+            except Exception:
+                # Fallback to heuristic direct distance if xy positions missing
+                edge_len = heuristics[curr['loc']].get(neighbor, 1.0)
+            travel_time = edge_len / speed
+            child = {
+                'loc': neighbor,
+                'g_val': curr['g_val'] + travel_time,
+                'h_val': heuristics[neighbor][goal_node_id] / speed,
+                'parent': curr,
+                'timestep': curr['timestep'] + travel_time,
+            }
             if (child['loc'], child['timestep']) in closed_list:
                 existing_node = closed_list[(child['loc'], child['timestep'])]
                 if compare_nodes(child, existing_node):

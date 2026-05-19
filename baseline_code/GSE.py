@@ -172,7 +172,7 @@ class GSE(object):
     def _plan_path(self, nodes_dict, heuristics, t, label="goal", forbidden_nodes=None):
         # Runs A* from self.start to self.goal; forbidden_nodes optionally excludes nodes (used for rerouting)
         success, path = simple_single_agent_astar(
-            nodes_dict, self.start, self.goal, heuristics, t, forbidden_nodes=forbidden_nodes
+            nodes_dict, self.start, self.goal, heuristics, t, forbidden_nodes=forbidden_nodes, speed=self.speed
         )
         if success:
             mid_edge = (self.start != self.current_node)

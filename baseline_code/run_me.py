@@ -54,7 +54,7 @@ AUCTION_BETA = 0.3
 # Visualization
 plot_graph         = False
 visualization      = True
-real_minutes_per_pseudo_hour = 0.1  # 12 pseudo-hours -> 12 real minutes
+real_minutes_per_pseudo_hour = 0.5  # 12 pseudo-hours -> 12 real minutes
 gse_visual_max_step_distance = 0.2  # lower value = smoother on-screen GSE movement
 render_every_n_steps = 1
 

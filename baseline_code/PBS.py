@@ -16,8 +16,8 @@ When no alternative route exists a GSE waits at its current node
 
 from single_agent_planner import simple_single_agent_astar
 
-RESERVATION_HORIZON = 3  # look-ahead steps for conflict detection
-TIME_MARGIN = 2           # ticks of slack when comparing ETAs
+RESERVATION_HORIZON = 2  # look-ahead steps for conflict detection
+TIME_MARGIN = 3         # ticks of slack when comparing ETAs
 
 
 # =============================================================================
@@ -116,14 +116,16 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
 
             # Node conflict,  only yield to lower-ID (higher-priority) GSEs
             for blocker_id, blocker_eta in reserved_nodes.get(node_id, []):
-                if blocker_id < gse.id and abs(my_eta - blocker_eta) <= TIME_MARGIN:
+                # Yield only if the blocker is expected to be at or before our ETA
+                if blocker_id < gse.id and blocker_eta <= my_eta + 0e-9:
                     blocked_nodes.add(node_id)
                     break
 
             # Edge conflict, same priority rule
             edge = frozenset({prev_node, node_id})
             for blocker_id, blocker_eta in reserved_edges.get(edge, []):
-                if blocker_id < gse.id and abs(my_eta - blocker_eta) <= TIME_MARGIN:
+                # Yield only if the blocker is expected to be on the edge at or before our ETA
+                if blocker_id < gse.id and blocker_eta <= my_eta + 0e-9:
                     blocked_nodes.add(node_id)
                     break
 
@@ -225,8 +227,8 @@ def resolve_conflicts(gse_lst, nodes_dict, heuristics, t):
         if escape_options:
             escape_node = escape_options[0]
             success, detour = simple_single_agent_astar(
-                nodes_dict, escape_node, loser.goal, heuristics, t
-            )
+                    nodes_dict, escape_node, loser.goal, heuristics, t, speed=loser.speed
+                )
 
             if success:
                 loser.path_to_goal = (
@@ -276,7 +278,7 @@ def _replan_around(gse, blocked_nodes, nodes_dict, heuristics, t):
 
     try:
         success, path = simple_single_agent_astar(
-            nodes_dict, start_node, gse.goal, heuristics, t
+            nodes_dict, start_node, gse.goal, heuristics, t, speed=gse.speed
         )
     finally:
         for node_id, removed_neighbors in removed.items():
